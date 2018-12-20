@@ -24,7 +24,8 @@ GDAL_PREFIX = '/vsitar/{}'
 
 
 def convert_file(fname, out_fname, group_name='/', dataset_name='dataset',
-                 compression=H5CompressionFilter.LZF, filter_opts=None):
+                 compression=H5CompressionFilter.LZF, filter_opts=None,
+                 attrs=None):
     """
     Convert generic single band image file to HDF5.
     Processes in a tiled fashion to minimise memory use.
@@ -45,13 +46,17 @@ def convert_file(fname, out_fname, group_name='/', dataset_name='dataset',
         The compression filter to use.
         Default is H5CompressionFilter.LZF
 
-    :filter_opts:
+    :param filter_opts:
         A dict of key value pairs available to the given configuration
         instance of H5CompressionFilter. For example
         H5CompressionFilter.LZF has the keywords *chunks* and *shuffle*
         available.
         Default is None, which will use the default settings for the
         chosen H5CompressionFilter instance.
+
+    :param attrs:
+        A dict containing any attribute information to be attached
+        to the HDF5 Dataset.
 
     :return:
         None. Content is written directly to disk.
@@ -74,12 +79,13 @@ def convert_file(fname, out_fname, group_name='/', dataset_name='dataset',
             ytile = filter_opts['chunks'][0]
 
             # dataset attributes
-            attrs = {
-                'description': ('1 second DSM derived from the SRTM; '
-                                'Shuttle Radar Topography Mission'),
-                'geotransform': ds.transform.to_gdal(),
-                'crs_wkt': ds.crs.wkt
-            }
+            if attrs:
+                attrs = attrs.copy()
+            else:
+                attrs = {}
+            
+            attrs['geotransform'] = ds.transform.to_gdal()
+            attrs['crs_wkt'] = ds.crs.wkt
 
             # dataset creation options
             kwargs = compression.config(**filter_opts).dataset_compression_kwargs()

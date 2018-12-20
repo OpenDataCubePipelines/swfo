@@ -95,6 +95,40 @@ def mcd43a1_vrt(indir, outdir):
     mcd43a1.buildvrt(indir, outdir)
 
 
+@mcd43a1_cli.command(help='Convert JAXA VRT files to a HDF5 file.')
+@click.option("--indir", type=click.Path(dir_okay=True, file_okay=False),
+              help="A readable directory to containing the original files.")
+@click.option("--outdir", type=click.Path(dir_okay=True, file_okay=False),
+              help="A writeable directory to contain the converted files.")
+@click.option("--compression", type=CompressionType(), default="LZF")
+@click.option("--filter-opts", type=JsonType(), default=None)
+def mcd43a1_h5(indir, outdir, compression, filter_opts):
+    """
+    Convert MCD43A1 VRT files to HDF5 files.
+    """
+    # convert to Path objects
+    indir = Path(indir)
+    outdir = Path(outdir)
+
+    # find vrt files
+    for day in indir.iterdir():
+
+        out_fname = outdir.joinpath('MCD43A1_{}_.h5'.format(day.name))
+        # create directories as needed
+        if not out_fname.absolute().parent.exists():
+            out_fname.parent.mkdir(parents=True)
+
+        attrs = {
+            'description': 'MCD43A1 product, mosaiced and converted to HDF5.'
+        }
+
+        for vrt_fname in day.rglob('*.vrt'):
+            dsm.convert_file(str(vrt_fname), out_fname,
+                             dataset_name=vrt_fname.stem,
+                             compression=compression, filter_opts=filter_opts,
+                             attrs=attrs)
+
+
 @prwtr_cli.command(help='Convert PR_WTR NetCDF files into HDF5 files.')
 @click.option("--indir", type=click.Path(dir_okay=True, file_okay=False),
               help="A readable directory to containing the original files.")
@@ -146,8 +180,12 @@ def ga_dsm(fname, out_fname, compression, filter_opts):
     if not out_fname.absolute().parent.exists():
         out_fname.parent.mkdir(parents=True)
 
+    attrs = {
+        'description': ('1 second DSM derived from the SRTM; '
+                        'Shuttle Radar Topography Mission')
+    }
     dsm.convert_file(fname, str(out_fname), 'SRTM', 'GA-DSM', compression,
-                     filter_opts)
+                     filter_opts, attrs)
 
 
 @dsm_cli.command(help='Mosaic all the JAXA DSM files via a VRT.')

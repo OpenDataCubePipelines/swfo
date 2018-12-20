@@ -93,7 +93,11 @@ def convert_file(fname, out_fname, compression, filter_opts):
 
                 # use ds native chunks if none are provided
                 if 'chunks' not in f_opts:
-                    f_opts['chunks'] = ds.block_shapes[i]
+                    try:
+                        f_opts['chunks'] = ds.block_shapes[i]
+                    except IndexError:
+                        print("Chunk error: {}".format(fname))
+                        f_opts['chunks'] = (73, 144)
 
                 # write to disk as an IMAGE Class Dataset
                 write_h5_image(ds.read(i), ds_name, fid, attrs=attrs,

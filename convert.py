@@ -123,10 +123,10 @@ def mcd43a1_h5(indir, outdir, compression, filter_opts):
         }
 
         for vrt_fname in day.rglob('*.vrt'):
-            dsm.convert_file(str(vrt_fname), out_fname,
-                             dataset_name=vrt_fname.stem,
-                             compression=compression, filter_opts=filter_opts,
-                             attrs=attrs)
+            mcd43a1.convert_vrt(str(vrt_fname), out_fname,
+                                dataset_name=vrt_fname.stem,
+                                compression=compression,
+                                filter_opts=filter_opts, attrs=attrs)
 
 
 @prwtr_cli.command(help='Convert PR_WTR NetCDF files into HDF5 files.')

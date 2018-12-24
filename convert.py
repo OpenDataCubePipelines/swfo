@@ -14,6 +14,7 @@ import mcd43a1
 import prwtr
 import dsm
 import atsr2_aot
+import ozone
 
 
 class JsonType(click.ParamType):
@@ -56,6 +57,11 @@ def dsm_cli():
 
 @click.group(name='aot', help='Convert Aerosol Optical Thickness files.')
 def aot_cli():
+    pass
+
+
+@click.group(name='ozone', help='Convert Ozone files.')
+def ozone_cli():
     pass
 
 
@@ -278,11 +284,35 @@ def atsr2_files(indir, out_fname, compression, filter_opts):
     atsr2_aot.convert(indir, out_fname, compression, filter_opts)
 
 
+@ozone_cli.command(help='Converts ozone .tif files to a HDF5 file.')
+@click.option("--indir", type=click.Path(dir_okay=True, file_okay=False),
+              help="A readable directory to containing the original files.")
+@click.option("--out-fname", type=click.Path(dir_okay=False, file_okay=True),
+              help="A writeable directory to contain the converted files.")
+@click.option("--compression", type=CompressionType(), default="LZF")
+@click.option("--filter-opts", type=JsonType(), default=None)
+def ozone_files(indir, out_fname, compression, filter_opts):
+    """
+    Converts ozone .tif files to a HDF5 file.
+    """
+    # convert to Path objects
+    indir = Path(indir)
+    out_fname = Path(out_fname)
+
+    # create directories as needed
+    if not out_fname.absolute().parent.exists():
+        out_fname.parent.mkdir(parents=True)
+
+    # convert the data
+    ozone.convert(indir, out_fname, compression, filter_opts)
+
+
 cli = click.CommandCollection(sources=[
     mcd43a1_cli,
     prwtr_cli,
     dsm_cli,
-    aot_cli
+    aot_cli,
+    ozone_cli
 ])
 
 

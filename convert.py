@@ -7,14 +7,13 @@ Conversion utilities for GA's auxillary data.
 from pathlib import Path
 import json
 import click
-import rasterio
-import h5py
 
 from wagl.hdf5.compression import H5CompressionFilter
 
 import mcd43a1
 import prwtr
 import dsm
+import atsr2_aot
 
 
 class JsonType(click.ParamType):
@@ -52,6 +51,11 @@ def prwtr_cli():
 
 @click.group(name='dsm', help='Convert DSM files.')
 def dsm_cli():
+    pass
+
+
+@click.group(name='aot', help='Convert Aerosol Optical Thickness files.')
+def aot_cli():
     pass
 
 
@@ -251,7 +255,35 @@ def jaxa_tiles(indir, outdir, compression, filter_opts):
         dsm.jaxa_tile(str(fname), str(out_fname), compression, filter_opts)
 
 
-cli = click.CommandCollection(sources=[mcd43a1_cli, prwtr_cli, dsm_cli])
+@aot_cli.command(help='Converts .pix & .cmp files to a HDF5 file.')
+@click.option("--indir", type=click.Path(dir_okay=True, file_okay=False),
+              help="A readable directory to containing the original files.")
+@click.option("--out-fname", type=click.Path(dir_okay=False, file_okay=True),
+              help="A writeable directory to contain the converted files.")
+@click.option("--compression", type=CompressionType(), default="LZF")
+@click.option("--filter-opts", type=JsonType(), default=None)
+def atsr2_files(indir, out_fname, compression, filter_opts):
+    """
+    Converts .pix & .cmp files to a HDF5 file.
+    """
+    # convert to Path objects
+    indir = Path(indir)
+    out_fname = Path(out_fname)
+
+    # create directories as needed
+    if not out_fname.absolute().parent.exists():
+        out_fname.parent.mkdir(parents=True)
+
+    # convert the data
+    atsr2_aot.convert(indir, out_fname, compression, filter_opts)
+
+
+cli = click.CommandCollection(sources=[
+    mcd43a1_cli,
+    prwtr_cli,
+    dsm_cli,
+    aot_cli
+])
 
 
 if __name__ == '__main__':

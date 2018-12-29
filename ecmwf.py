@@ -211,7 +211,7 @@ def convert(fname, base_outdir, compression=H5CompressionFilter.LZF,
                 if len(filter_opts['chunks']) != 3:
                     chunks = list(filter_opts['chunks'])
                     chunks.insert(0, 37)
-                    filter_opts['chunks'] = chunks
+                    filter_opts['chunks'] = tuple(chunks)
                 _convert_3d(rds, fid, product, compression, filter_opts)
             elif not rds.count % 37:
                 # convert 4D (eg months worth of 37 atmospheric layers)
@@ -219,7 +219,7 @@ def convert(fname, base_outdir, compression=H5CompressionFilter.LZF,
                     chunks = list(filter_opts['chunks'])
                     chunks.insert(0, 37)
                     chunks.insert(0, 1)
-                    filter_opts['chunks'] = chunks
+                    filter_opts['chunks'] = tuple(chunks)
                 _convert_4d(rds, fid, product, compression, filter_opts)
             else:
                 # don't have multiples of 37

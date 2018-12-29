@@ -15,6 +15,7 @@ import prwtr
 import dsm
 import atsr2_aot
 import ozone
+import ecmwf
 
 
 class JsonType(click.ParamType):
@@ -62,6 +63,11 @@ def aot_cli():
 
 @click.group(name='ozone', help='Convert Ozone files.')
 def ozone_cli():
+    pass
+
+
+@click.group(name='ecmwf', help='Convert ECMWF GRIB files.')
+def ecmwf_cli():
     pass
 
 
@@ -307,12 +313,33 @@ def ozone_files(indir, out_fname, compression, filter_opts):
     ozone.convert(indir, out_fname, compression, filter_opts)
 
 
+@ecmwf_cli.command(help='Convert ECMWF GRIB files into a HDF5 files.')
+@click.option("--indir", type=click.Path(dir_okay=True, file_okay=False),
+              help="A readable directory to containing the original files.")
+@click.option("--outdir", type=click.Path(dir_okay=True, file_okay=False),
+              help="A writeable directory to contain the converted files.")
+@click.option("--compression", type=CompressionType(), default="LZF")
+@click.option("--filter-opts", type=JsonType(), default=None)
+def ecmwf_files(indir, outdir, compression, filter_opts):
+    """
+    Convert ECMWF GRIB files into a HDF5 files.
+    """
+    # convert to Path objects
+    indir = Path(indir)
+    outdir = Path(outdir)
+
+    # find vrt files
+    for fname in indir.rglob('*.grib'):
+        ecmwf.convert(fname, outdir, compression, filter_opts)
+
+
 cli = click.CommandCollection(sources=[
     mcd43a1_cli,
     prwtr_cli,
     dsm_cli,
     aot_cli,
-    ozone_cli
+    ozone_cli,
+    ecmwf_cli
 ])
 
 

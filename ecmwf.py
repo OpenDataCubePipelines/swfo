@@ -40,7 +40,13 @@ def metadata_dataframe(dataset):
 
         # create datetime object from seconds stored as str
         seconds = int(tags['GRIB_REF_TIME'].strip().split(' ')[0])
-        tstamp = datetime.fromtimestamp(seconds, timezone.utc)
+        # TODO on the HDF5 read, cater for datetime64([ns, UTC])
+        # which NumPy doesn't recognise (pandas does though)
+        # also fromtimestamp without specifying timezone
+        # eg datetime.datetime.fromtimestamp(1516060800) converts to localzone
+        # tstamp = datetime.fromtimestamp(seconds, timezone.utc)
+        # TODO cater for timezones
+        tstamp = datetime.utcfromtimestamp(seconds)
         tag_data['timestamp'].append(tstamp)
 
         # description

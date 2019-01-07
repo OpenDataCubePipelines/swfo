@@ -88,7 +88,7 @@ def prwtr_average(indir, outdir, compression=H5CompressionFilter.LZF,
 
             # synthesised leap year timestamp (use year 2000)
             fmt = "2000 {:02d} {:02d} {:02d}"
-            dtime = datetime.strptime(fmt.format(*grp_name), "2000 %m %d %H")
+            dtime = datetime.strptime(fmt.format(*grp_name), "%Y %m %d %H")
 
             # mean
             mean, geobox, chunks = calculate_average(grp_df)

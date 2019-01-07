@@ -1,5 +1,9 @@
 #!/bin/bash
 
+"""
+Create timeseries averages for the NOAA water vapour data.
+"""
+
 from datetime import datetime
 from pathlib import Path
 import numpy

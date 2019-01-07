@@ -9,7 +9,9 @@ from pathlib import Path
 import numpy
 import h5py
 import pandas
+
 from wagl.geobox import GriddedGeoBox
+from wagl.hdf5.compression import H5CompressionFilter
 from wagl.hdf5 import read_h5_table, write_h5_image
 
 
@@ -62,7 +64,8 @@ def calculate_average(dataframe):
     return mean, geobox, chunks
 
 
-def prwtr_average(indir, outdir, compression, filter_opts):
+def prwtr_average(indir, outdir, compression=H5CompressionFilter.LZF,
+                  filter_opts=None):
     """
     Take the 4 hourly daily average from all files.
     """

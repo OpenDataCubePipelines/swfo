@@ -98,8 +98,8 @@ def prwtr_average(indir, outdir, compression=H5CompressionFilter.LZF,
             # mean
             mean, geobox, chunks = calculate_average(grp_df)
 
-            # dataset name format "%B-%d-%H%M" eg FEBRUARY-06-1800 for Feb 6th 1800 hrs
-            dname = dtime.strftime("%B-%d-%H%M").upper()
+            # dataset name format "%B-%d/%H%M" eg FEBRUARY-06/1800 for Feb 6th 1800 hrs
+            dname = "AVERAGE/{}".format(dtime.strftime("%B-%d/%H%M").upper())
 
             # dataset description
             description = ("Average data for {year_month} {hour}00 hours, "
@@ -115,7 +115,7 @@ def prwtr_average(indir, outdir, compression=H5CompressionFilter.LZF,
             attrs = {
                 "description": description,
                 "timestamp": dtime,
-                "date_format": "2000 %B-%d-%H%M",
+                "date_format": "2000 %B-%d/%H%M",
                 "band_name": "BAND-{}".format(band_index +1),
                 "geotransform": geobox.transform.to_gdal(),
                 "crs_wkt": geobox.crs.ExportToWkt()

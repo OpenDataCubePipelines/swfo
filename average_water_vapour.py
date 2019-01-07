@@ -52,14 +52,19 @@ def calculate_average(dataframe):
         with h5py.File(row.filename, "r") as fid:
             ds = fid[row.band_name]
             ds.read_direct(data[i])
+            no_data = float(ds.attrs['missing_value'])
 
-    # get the geobox
+        # check for nodata and convert to nan
+        # do this for each dataset in case the nodata value changes
+        data[i][data[i] == no_data] = numpy.nan
+
+    # get the geobox, chunks
     with h5py.File(row.filename, "r") as fid:
         ds = fid[row.band_name]
         geobox = GriddedGeoBox.from_dataset(ds)
         chunks = ds.chunks
 
-    mean = data.mean(axis=0)
+    mean = numpy.nanmean(data, axis=0)
 
     return mean, geobox, chunks
 

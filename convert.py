@@ -2,6 +2,7 @@
 
 """
 Conversion utilities for GA's auxillary data.
+Create timeseries averages for the NOAA water vapour data.
 """
 
 from pathlib import Path
@@ -176,6 +177,20 @@ def pr_wtr_cmd(indir, outdir, compression, filter_opts):
 
         prwtr.convert_file(str(fname), str(out_fname), compression,
                            filter_opts)
+
+
+@prwtr_cli.command(help='Create a PR_WTR vallback dataset based on averages.')
+@click.option("--indir", type=click.Path(dir_okay=True, file_okay=False),
+              help="A readable directory to containing the PR_WTR HDF5 files.")
+@click.option("--outdir", type=click.Path(dir_okay=True, file_okay=False),
+              help="A writeable directory to contain the converted files.")
+@click.option("--compression", type=CompressionType(), default="LZF")
+@click.option("--filter-opts", type=JsonType(), default=None)
+def pr_wtr_fallback(indir, outdir, compression, filter_opts):
+    """
+    Create a PR_WTR vallback dataset based on averages.
+    """
+    prwtr.fallback(indir, outdir, compression, filter_opts)
 
 
 @dsm_cli.command(help="Convert GA's SRTM ENVI file into HDF5.")

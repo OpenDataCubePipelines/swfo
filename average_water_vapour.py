@@ -60,7 +60,7 @@ def calculate_average(dataframe):
 
     # get the geobox, chunks
     with h5py.File(row.filename, "r") as fid:
-        ds = fid[row.band_name]
+        ds = fid[row.dataset_name]
         geobox = GriddedGeoBox.from_dataset(ds)
         chunks = ds.chunks
 

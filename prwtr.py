@@ -62,6 +62,8 @@ def convert_file(fname, out_fname, compression, filter_opts):
                     'band_name': [name_fmt.format(i+1) for i in range(ds.count)]
                 }
             )
+            df['dataset_name'] = df.timestamp.dt.strftime('%Y/%B-%d/%H%M')
+            df['dataset_name'] = df['dataset_name'].str.upper()
 
             # create a timestamp and band name index table dataset
             desc = "Timestamp and Band Name index information."
@@ -74,7 +76,7 @@ def convert_file(fname, out_fname, compression, filter_opts):
 
             # process every band
             for i in range(1, ds.count + 1):
-                ds_name = name_fmt.format(i)
+                ds_name = df.iloc[i-1].dataset_name
 
                 # create empty or copy the user supplied filter options
                 if not filter_opts:
@@ -88,6 +90,7 @@ def convert_file(fname, out_fname, compression, filter_opts):
                 # TODO add fillvalue attr
                 attrs = ds.tags(i)
                 attrs['timestamp'] = df.iloc[i-1]['timestamp']
+                attrs['band_name'] = df.iloc[i-1]['band_name']
                 attrs['geotransform'] = ds.transform.to_gdal()
                 attrs['crs_wkt'] = CRS.ExportToWkt()
 

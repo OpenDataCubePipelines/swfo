@@ -120,7 +120,7 @@ def _build_index(indir):
     The records are sorted in ascending time (earliest to most recent)
     """
     df = pandas.DataFrame(columns=['filename', 'band_name', 'timestamp'])
-    for fname in Path(indir).glob("pr_wtr.eatm.*.h5"):
+    for fname in Path(indir).glob("pr_wtr.eatm.[0-9]*.h5"):
         with h5py.File(str(fname), 'r') as fid:
             tmp_df = read_h5_table(fid, 'INDEX')
             tmp_df['filename'] = fid.filename

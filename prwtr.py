@@ -178,7 +178,7 @@ def fallback(indir, outdir, compression=H5CompressionFilter.LZF,
     groups = df.groupby([df.index.month, df.index.day, df.index.hour])
 
     # create directories as needed
-    out_fname = Path(outdir).joinpath("pr_wtr_average.h5")
+    out_fname = Path(outdir).joinpath("pr_wtr.eatm.average.h5")
     if not out_fname.parent.exists():
         out_fname.parent.mkdir(parents=True)
 

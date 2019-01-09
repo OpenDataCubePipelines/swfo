@@ -148,7 +148,7 @@ def _average(dataframe):
     for i, rec in enumerate(dataframe.iterrows()):
         row = rec[1]
         with h5py.File(row.filename, "r") as fid:
-            ds = fid[row.band_name]
+            ds = fid[row.dataset_name]
             ds.read_direct(data[i])
             no_data = float(ds.attrs['missing_value'])
 

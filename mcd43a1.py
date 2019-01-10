@@ -93,11 +93,20 @@ def buildvrt(indir, outdir):
     """
     Build VRT mosaic of each for each MCD43A1 HDF4 subdataset.
     """
+    import datetime
+    from os.path import basename
     indir = Path(indir)
     outdir = Path(outdir)
 
     # loop over each day directory
     for day in indir.iterdir():
+        name = (basename(str(day)))
+        fmt = '%Y.%m.%d'
+        dt = datetime.datetime.strptime(name, fmt)
+        doy = dt.timetuple().tm_yday
+        if doy is not 185:
+            continue
+
         # expecting 20 subdatasets in each hdf4 file (hopefully the order gdal lists them in is consistent)
         subdataset_fnames = {i: [] for i in range(20)}
 
@@ -160,7 +169,6 @@ def convert_vrt(fname, out_fname, dataset_name='dataset',
             else:
                 filter_opts = filter_opts.copy()
 
-
             if 'chunks' not in filter_opts:
                 filter_opts['chunks'] = chunks
 
@@ -179,6 +187,7 @@ def convert_vrt(fname, out_fname, dataset_name='dataset',
 
             attrs['geotransform'] = rds.transform.to_gdal()
             attrs['crs_wkt'] = rds.crs.wkt
+            attrs['nodata'] = rds.nodata
 
             # dataset creation options
             kwargs = compression.config(**filter_opts).dataset_compression_kwargs()

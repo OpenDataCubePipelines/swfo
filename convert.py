@@ -136,8 +136,8 @@ def mcd43a1_h5(indir, outdir, compression, filter_opts):
         if not out_fname.absolute().parent.exists():
             out_fname.parent.mkdir(parents=True)
 
-         attrs = {
-            'description': 'MCD43A1 product, mosaiced and converted to HDF5.',
+        attrs = {
+            'description': 'MCD43A1 product, mosaiced and converted to HDF5.'
         }
 
         for vrt_fname in day.rglob('*.vrt'):

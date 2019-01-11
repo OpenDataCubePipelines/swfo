@@ -47,7 +47,7 @@ class JsonEncoder(json.JSONEncoder):
     """
     A wrapper class to address the issue of json encoding error
     This class handles  the json serializing error for numpy
-    datatype: 'float32' and numpy arrays
+    datatype: 'float32', datetime and numpy arrays
     """
     def default(self, obj):
         if isinstance(obj, np.integer):
@@ -62,25 +62,27 @@ class JsonEncoder(json.JSONEncoder):
             raise OSError('Json Encoding Error')
 
 
-def get_h5_lists(brdf_dir=None, folder_fmt='%Y.%m.%d'):
+def get_h5_info(brdf_dir=None):
     """
     A function to extract all the MODIS BRDF acquisition details
     from the root folder where BRDF data are stored.
 
     :param brdf_dir:
-        A path name to where BRDF data are stored
+        A path name to where hdf5 formatted BRDF data are stored
         The BRDF directories are assumed to be yyyy.mm.dd naming convention.
+
     :return:
-        a nested dict containing  tile numbers and dates and BRDF file path
+        a nested dict containing  dates and BRDF file path
         which can be accessed through a key param defined by a folder name
 
     """
     brdf_data = {}
+    folder_fmt = '%Y.%m.%d'
 
     for item in os.listdir(brdf_dir):
-        print(item)
         files = [f for f in os.listdir(pjoin(brdf_dir, item))]
         h5_names = {}
+
         try:
             filename = fnmatch.filter(files, '*.h5')[0]
             file_path = pjoin(brdf_dir, item, filename)
@@ -88,27 +90,44 @@ def get_h5_lists(brdf_dir=None, folder_fmt='%Y.%m.%d'):
         except IndexError:
             h5_names['path'] = None
 
-        h5_names['datetime'] = datetime.datetime.strptime(item, folder_fmt)
+        try:
+            h5_names['datetime'] = datetime.datetime.strptime(item, folder_fmt)
+        except ValueError:
+            h5_names['datetime'] = None
+
         brdf_data[item] = h5_names
 
     return brdf_data
 
 
-def get_h5_data_attrs(h5file, sds_name):
+def get_sds_data_attrs(h5file, sds_name):
+    """
+    A function to extract specific sds_band dataset and its attributes
 
+    :param h5file:
+        A 'path' to h5 file
+    :param sds_name:
+        A sub-dataset name in h5 file
+
+    :return:
+        specific sds data and its attributes
+    """
     with h5py.File(h5file, 'r') as src:
         attrs = {k: v for k, v in src[sds_name].attrs.items()}
 
+        # this needs to be removed once attributes (scales, offsets and nodata) are
+        # included in attributes when generating the h5 file
         if fnmatch.fnmatch(sds_name, '*Quality*'):
             nodata_val = 255
             scale = 1
             offset = 0
-
-            attrs['scale'] = scale
-            attrs['offset'] = offset
         else:
             nodata_val = 32767
+            scale = 0.001
+            offset = 0
 
+        attrs['scale'] = scale
+        attrs['offset'] = offset
         attrs['nodata'] = nodata_val
 
         data = src[sds_name][:]
@@ -116,14 +135,28 @@ def get_h5_data_attrs(h5file, sds_name):
     return data, attrs
 
 
-def mask_and_scale(data, metadata, apply_scale=False):
+def mask_and_scale(data=None, attrs=None, apply_scale=False):
+    """
+    A function to mask the data based on its no data value and
+    apply the scale and offset it required
+
+    :param data:
+        A numpy array data type
+    :param attrs:
+        A dict type attributes associated with data
+    :param apply_scale:
+        A bool parameter to apply scale and offset or not
+    :return:
+        A scale and masked numpy array if apply scale is True
+        else masked numpy array if apply scale is False
+    """
 
     if not type(data) is np.ndarray:
         data = np.array(data)
 
-    nodata = metadata['nodata']
-    scale = metadata['scale']
-    offset = metadata['offset']
+    nodata = attrs['nodata']
+    scale = attrs['scale']
+    offset = attrs['offset']
 
     masked_data = np.ma.masked_where(data == nodata, data)
 
@@ -135,40 +168,58 @@ def mask_and_scale(data, metadata, apply_scale=False):
     return scaled_masked_data
 
 
-def sum_time_series(data):
-    """expects data array to be masked array"""
+def base_data_check(data_all):
+    """
+    A function to perform base data check by computing
+    mean, standard deviation and coefficient of variation
+    across whole spatial (x, y dimension) for each
+    time step from a list of data.
 
-    if not np.ma.is_masked(data):
-        data = np.ma.array(data)
+    This function assumes data in a list is a spatial 2 dims (x, y)
+    data
+    """
 
-    return np.ma.sum(data, axis=0)
+    mean_list, std_list, cov_list = [], [], []
+
+    for data in data_all:
+        mean = np.ma.mean(data)
+        std = np.ma.std(data)
+
+        mean_list.append(mean)
+        std_list.append(std)
+        cov_list.append((std / mean) * 100)
+
+    return mean_list, std_list, cov_list
 
 
 def get_sds_doy_dataset(dirs=None, dayofyear=None, sds_name=None, year=None, apply_scale=False):
     """
-    returns masked numpy array of specific sds scaled and masked data
+    returns a list of masked numpy array of specific sds masked data
     for particular day of the year from all the hdf5 files in a
     given directory
     """
 
-    h5_lists_dict = get_h5_lists(brdf_dir=dirs)
-    keys = np.sort([k for k in h5_lists_dict])
+    h5_info = get_h5_info(brdf_dir=dirs)
+    keys = np.sort([k for k in h5_info])
+
     data_all = []
 
     for k in keys:
-        dt = (h5_lists_dict[k]['datetime'])
-        doy = dt.timetuple().tm_yday
-        yr = dt.timetuple().tm_year
+        dt = h5_info[k]['datetime']
+
+        if dt:
+            doy = dt.timetuple().tm_yday
+            yr = dt.timetuple().tm_year
 
         if doy == dayofyear and yr > year:
-            h5_file = (h5_lists_dict[k]['path'])
-            data, metadata = get_sds_data(h5_file, sds_name)
-            scaled_data = mask_and_scale(data, metadata, apply_scale=apply_scale)
-            print(scaled_data[5000:6000, 9000:15000])
+            h5_file = (h5_info[k]['path'])
+            data, attrs = get_sds_data_attrs(h5_file, sds_name)
+            scaled_data = mask_and_scale(data, attrs, apply_scale=apply_scale)
+            #print(scaled_data[5000:6000, 9000:15000])
 
             data_all.append(scaled_data)
 
-    return np.ma.array(data_all)
+    return data_all
 
 
 def main():
@@ -176,15 +227,25 @@ def main():
     brdf_dir = '/g/data/u46/users/pd1813/BRDF_PARAM/MCD43A1_C6_HDF5_TEST/'
     sds_name = SDS_BAND_NAME['QUAL_BAND1']
     apply_scale = False
-    dataset = get_sds_doy_dataset(dirs=brdf_dir, dayofyear=185, sds_name=sds_name, year=2010, apply_scale=apply_scale)
 
-    mean_data = sum_time_series(dataset)
+    # get a list of masked applied 2 or three dimensional numpy array data sets
+    # depending on the sds bands, returned data are list of 2 dimensional data set
+    # (spatial dimension x, y) for 'quality' bands and 3 dimensional
+    # data set for brdf parameters (iso, vol and geo) bands in spatial
+    # dimension x and y
 
+    data_set = get_sds_doy_dataset(dirs=brdf_dir, dayofyear=185, sds_name=sds_name, year=2015,
+                                   apply_scale=apply_scale)
+
+    if fnmatch.fnmatch(sds_name, '*Quality*'):
+        mean_qual_list, std_list, cov_list = base_data_check(data_set)
+    else:
+        mean_
 
 
 
     # print(mean_data.shape)
-    plot.show(mean_data)
+    # plot.show(mean_data)
     # print(mean_data.shape)
     # print(mean_data[5000:6000, 9000:15000])
     #

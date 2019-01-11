@@ -100,6 +100,9 @@ def buildvrt(indir, outdir):
 
     # loop over each day directory
     for day in indir.iterdir():
+
+        # delete this section, it is here to process only specific dates in the
+        # directory
         name = (basename(str(day)))
         fmt = '%Y.%m.%d'
         dt = datetime.datetime.strptime(name, fmt)

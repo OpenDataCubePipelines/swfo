@@ -5,16 +5,11 @@ BRDF data extraction utilities from hdf5 files
 """
 
 import os
-import sys
-import rasterio
-import rasterio.plot as plot
-from os.path import join as pjoin, basename
-import timeit
+from os.path import join as pjoin
 import h5py
 import fnmatch
 import datetime
 import numpy as np
-from numpy import vstack
 import json
 
 
@@ -43,6 +38,7 @@ TILE = ['h29v10', 'h30v10', 'h31v10', 'h32v10', 'h27v11', 'h28v11', 'h29v11', 'h
         'h31v11', 'h27v12', 'h28v12', 'h29v12', 'h30v12', 'h31v12', 'h28v13', 'h29v13']
 
 BRDF_PARAM = {'iso': 0, 'vol': 1, 'geo': 2}
+
 
 class JsonEncoder(json.JSONEncoder):
     """
@@ -144,7 +140,8 @@ def get_sds_doy_dataset(dirs=None, dayofyear=None, sds_name=None, year=None, til
     # print(json.dumps(h5_info, cls=JsonEncoder, indent=4))
 
     keys = np.sort([k for k in h5_info])
-    # print(keys)
+    print(keys)
+
     data_dict = {}
 
     for k in keys:
@@ -153,7 +150,8 @@ def get_sds_doy_dataset(dirs=None, dayofyear=None, sds_name=None, year=None, til
         doy = dt.timetuple().tm_yday
         yr = dt.timetuple().tm_year
 
-        if doy == dayofyear and yr > year:
+        if doy < dayofyear and yr > year:
+
             h5_file = (h5_info[k][tile])
             print(h5_file)
             with h5py.File(h5_file, 'r') as fid:
@@ -201,10 +199,6 @@ def get_qualityband_count(quality_data=None):
     data = [quality_data[key] for key in keys]
     num_val_pixels = len(keys) - np.sum(data, axis=0)
 
-    # print(num_val_pixels[1000:1100, 7000:7100])
-    # for key in keys:
-    #     print(quality_data[key][1000:1100, 7000:7100])
-
     return np.array(num_val_pixels)
 
 
@@ -223,110 +217,155 @@ def get_threshold(data_dict):
 
 def get_running_median(band_data, quality_count, min_numpix_required, spatial_stats):
     """
-    This function computes the running median values for time series data set
+    This function computes the running median values for full time series
+    and replaces the bad band quality data with full time series median value.
+    This function returns, dict with dataset replaced of bad band quality with
+    running median for iso, vol and geo, also for each key, the corresponding
+    threshold value for iso, vol and geo parameters are also included along
+    with band band quality indexes
     """
     keys = [k for k in band_data.keys()]
-    iso_data, vol_data, geo_data = [], [], []
 
+    # compute the running median of full time series data
+    run_median_iso = np.ma.median(np.ma.array([np.ma.masked_invalid(band_data[key][0]) for key in keys]), axis=0)
+    run_median_vol = np.ma.median(np.ma.array([np.ma.masked_invalid(band_data[key][1]) for key in keys]), axis=0)
+    run_median_geo = np.ma.median(np.ma.array([np.ma.masked_invalid(band_data[key][2]) for key in keys]), axis=0)
+
+    median_filled_data = {}
+
+    # replacing the bad band quality data with running median
     for key in keys:
-        assert len(band_data[key].shape) == 3
-        iso = band_data[key][0].astype('float32')
-        vol = band_data[key][1].astype('float32')
-        geo = band_data[key][2].astype('float32')
 
-        iso[quality_count < min_numpix_required] = np.nan
-        vol[quality_count < min_numpix_required] = np.nan
-        geo[quality_count < min_numpix_required] = np.nan
+        temp = {}
 
-        iso_data.append(np.array(iso))
-        vol_data.append(np.array(vol))
-        geo_data.append(np.array(geo))
+        iso = np.ma.masked_invalid(band_data[key][0].astype('float32'))
+        vol = np.ma.masked_invalid(band_data[key][1].astype('float32'))
+        geo = np.ma.masked_invalid(band_data[key][2].astype('float32'))
 
-        # print(iso[2000:2100, 2000:2100])
-
-    # compute the running median on non-null data
-    run_median_iso = np.nanmedian(iso_data, axis=0)
-    run_median_vol = np.nanmedian(vol_data, axis=0)
-    run_median_geo = np.nanmedian(geo_data, axis=0)
-
-    # replacing the null data with running median
-    for key in keys:
-        iso = band_data[key][0].astype('float32')
-        vol = band_data[key][1].astype('float32')
-        geo = band_data[key][2].astype('float32')
-
-        iso[quality_count < min_numpix_required] = np.nan
-        vol[quality_count < min_numpix_required] = np.nan
-        geo[quality_count < min_numpix_required] = np.nan
+        # print(iso[2200:2210, 2200:2210])
 
         # get the index where band_quality number is less the minimum number of valid pixels required
-        iso_idx = np.where(np.isnan(iso))
-        vol_idx = np.where(np.isnan(vol))
-        geo_idx = np.where(np.isnan(geo))
+        bad_idx = np.ma.where(quality_count < min_numpix_required)
 
         # replace the values corresponding to idx with running median of all non-null data
-        iso[iso_idx] = run_median_iso[iso_idx]
-        vol[vol_idx] = run_median_vol[vol_idx]
-        geo[geo_idx] = run_median_geo[geo_idx]
+        iso[bad_idx] = run_median_iso[bad_idx]
+        vol[bad_idx] = run_median_vol[bad_idx]
+        geo[bad_idx] = run_median_geo[bad_idx]
 
-        # get threshold value for key
-        threshold = spatial_stats[key]['std']
-        iso_threshold = threshold[0]
-        vol_threshold = threshold[1]
-        geo_threshold = threshold[2]
+        # print(iso[2200:2210, 2200:2210])
+        temp['iso'] = iso
+        temp['vol'] = vol
+        temp['geo'] = geo
+        temp['iso_threshold'] = spatial_stats[key]['std'][0]
+        temp['vol_threshold'] = spatial_stats[key]['std'][1]
+        temp['geo_threshold'] = spatial_stats[key]['std'][2]
+        temp['qual_idx'] = bad_idx
 
-        #TODO tomorrow start implementiond the thresholding methods with filter
+        median_filled_data[key] = temp
 
-        print(iso[2000:2100, 2000:2100])
+    return median_filled_data
 
-    print(quality_count[2000:2100, 2000:2100])
-    print(run_median_iso[2000:2100, 2000:2100])
 
-    return run_median_iso, run_median_vol, run_median_geo
+def apply_threshold(data, filter_size):
+    """
+    This function applies median filter on the dataset, median filter with size of
+    (2 * filter_size + 1) is applied as a running median filter with time steps centered
+    the data value. For example, if time step included day of year [001, 002,...009] then
+    median filer would consists of all dataset if filter_size is 4 and center time step
+    would be day 005. For the edge cases, the filter size would only encompass the all
+    available time step within the defined filter size. For example, if data were to be filtered
+    for day 008 for [001, 002,...009] then the median filter would only encompass data from
+    day [004, 005, 006, 007, 008 and 009] since day 010, 011, 012 are missing.
+
+    """
+    keys = [k for k in data.keys()]
+
+    # get the data iso, vol and go from data which is a dict for all the keys and convert to numpy array
+    data_iso = np.ma.array([np.ma.masked_invalid(data[key]['iso']) for key in keys])
+    data_vol = np.ma.array([np.ma.masked_invalid(data[key]['vol']) for key in keys])
+    data_geo = np.ma.array([np.ma.masked_invalid(data[key]['geo']) for key in keys])
+
+    print(data_iso.mask)
+    # set indexes to compute temporal median filtering of the dataset as defined
+    # by a filter size with time step centered around data value
+    for i in range(len(keys)):
+        start_idx = i - filter_size
+        end_idx = i + filter_size
+        if start_idx < 0:
+            start_idx = 0
+        if end_idx > len(keys)-1:
+            end_idx = len(keys)
+
+        # extract the value for a key
+        iso_clean = np.ma.masked_invalid(data[keys[i]]['iso'])
+        vol_clean = np.ma.masked_invalid(data[keys[i]]['vol'])
+        geo_clean = np.ma.masked_invalid(data[keys[i]]['geo'])
+
+        print(keys[start_idx:end_idx])
+        print('iso')
+        print(iso_clean)
+        # print(iso_clean[2200:2210, 2200:2210])
+        # get temporal local median value as set by filter size
+        iso_local_median = np.ma.median(data_iso[start_idx:end_idx], axis=0)
+        vol_local_median = np.ma.median(data_vol[start_idx:end_idx], axis=0)
+        geo_local_median = np.ma.median(data_geo[start_idx:end_idx], axis=0)
+        print('median')
+        print(iso_local_median)
+
+        # apply threshold test to clean the data set
+        threshold_iso_idx = np.ma.where(abs(iso_local_median - iso_clean) > data[keys[i]]['iso_threshold'])
+        threshold_vol_idx = np.ma.where(abs(vol_local_median - vol_clean) > data[keys[i]]['vol_threshold'])
+        threshold_geo_idx = np.ma.where(abs(geo_local_median - geo_clean) > data[keys[i]]['geo_threshold'])
+
+        # print(abs(iso_local_median - iso_clean)[2200:2210, 2200:2210])
+        # print(data[keys[i]]['iso_threshold'])
+
+        # replace the data which did not pass threshold test with temporal local median value
+        iso_clean[threshold_iso_idx] = iso_local_median[threshold_iso_idx]
+        vol_clean[threshold_vol_idx] = vol_local_median[threshold_vol_idx]
+        geo_clean[threshold_geo_idx] = geo_local_median[threshold_geo_idx]
+
+        # replace the data which were initially filled with running median with local median
+        iso_clean[data[keys[i]]['qual_idx']] = iso_local_median[data[keys[i]]['qual_idx']]
+        vol_clean[data[keys[i]]['qual_idx']] = iso_local_median[data[keys[i]]['qual_idx']]
+        geo_clean[data[keys[i]]['qual_idx']] = iso_local_median[data[keys[i]]['qual_idx']]
+
+        # print(iso_clean[2200:2210, 2200:2210])
+        # print(iso_local_median[2200:2210, 2200:2210])
+        print('clean')
+        print(iso_clean)
 
 
 def clean_data(band_data, quality_data):
 
     pthresh = 10
+    filter_size = 4
     keys = [k for k in band_data.keys()]
 
     # spatial stats required to set the threshold value
     tile_spatial_stats = generate_tile_spatial_stats(band_data)
     print(json.dumps(tile_spatial_stats, cls=JsonEncoder, indent=4))
 
-    # generate threshold value from spatial stats
-    threshold_iso, threshold_vol, threshold_geo = get_threshold(tile_spatial_stats)
-
     # generate number of valid pixel count required for analysis in a time series stack
     # as defined in David Jubb's BRDF document
-    min_numpix_required = int((pthresh / 100.0) * len(keys))
-    # print(min_numpix_required)
+    min_numpix_required = float(int((pthresh / 100.0) * len(keys)))
+    print(min_numpix_required)
 
     # quality band counts required to check if
     quality_count = get_qualityband_count(quality_data=quality_data)
-
+    # quality_count[2209, 2209] = -111.
+    print(quality_count[2200:2210, 2200:2210])
     # replace quality bands with nan with -999 to allow array operations
-    quality_count[np.where(np.isnan(quality_count))] = -999.
+    #quality_count[np.where(np.isnan(quality_count))] = -999.
+    quality_count = np.ma.masked_invalid(quality_count)
 
-    # get running median of non-null data to fill in null data
-    run_median_iso, run_median_vol, run_median_geo = get_running_median(band_data, quality_count,
-                                                                        min_numpix_required, tile_spatial_stats)
+    # get running median filled data of non-null data inplace of null data
+    median_filled_data = get_running_median(band_data, quality_count, min_numpix_required, tile_spatial_stats)
 
-    # replace nan values with running median of non-null data
+    apply_threshold(median_filled_data, filter_size)
 
-
-
-
-
-    # print(run_median_iso.shape, np.ma.array(run_median_iso))
-    # print(quality_count[2000:2100, 2000:2100])
-    # print(iso[0][5000:5100, 7000:7100].filled())
-    # print(vol[0][5000:5100, 7000:7100])
-    # print(geo[0][5000:5100, 7000:7100])
-
-    # print(threshold_iso, threshold_vol, threshold_geo)
-    # print(json.dumps(tile_spatial_stats, cls=JsonEncoder, indent=4))
-
+    # TODO Check apply threshold method and run some tests
+    
 
 def main(brdf_dir=None, band=None, apply_scale=None, doy=None, year_from=None, tile=None):
 
@@ -344,11 +383,11 @@ def main(brdf_dir=None, band=None, apply_scale=None, doy=None, year_from=None, t
 
 
 if __name__ == "__main__":
-    brdf_dir = '/g/data/u46/users/pd1813/BRDF_PARAM/MCD43A1_C6_HDF5_TILE_DATASET/'
-    # brdf_dir = '/g/data/u46/users/ia1511/Work/data/brdf-collection-6/reprocessed/'
+    # brdf_dir = '/g/data/u46/users/pd1813/BRDF_PARAM/MCD43A1_C6_HDF5_TILE_DATASET/'
+    brdf_dir = '/g/data/u46/users/ia1511/Work/data/brdf-collection-6/reprocessed/'
     band = "BAND1"
     tile = 'h29v10'
     apply_scale = True
-    doy = 185  # subset for which doy to be processed
+    doy = 10  # subset for which doy to be processed
     year_from = 2001  # subset from which year to be processed
     main(brdf_dir=brdf_dir, band=band, apply_scale=apply_scale, doy=doy, year_from=year_from, tile=tile)

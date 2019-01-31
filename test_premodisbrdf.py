@@ -105,7 +105,38 @@ class BrdfModuleTest(unittest.TestCase):
         self.assertEqual(clean_data[keys[9]]['iso_clean'][1, 0], 5.0)
         self.assertEqual(clean_data[keys[8]]['iso_clean'][1, 0], 5.0)
 
+    def test_temporal_average(self):
+        """ test to check the result of temporal average computation """
 
-if __name__ == '__main__': 
+        data_band, data_qual = gen_test_dataset()
+
+        data_band['2012.01.01'] = np.ones(shape=(3, 5, 5), dtype='float32')
+        data_qual['2012.01.01'] = np.zeros(shape=(5, 5), dtype='float32')
+
+        keys = [k for k in data_band.keys()]
+
+        data_band[keys[0]][0][1, 1] = 12.0
+        data_band[keys[1]][0][1, 1] = 12.0
+        data_band[keys[2]][0][1, 1] = 12.0
+        data_band[keys[7]][0][1, 1] = 12.0
+        data_band[keys[8]][0][1, 1] = 12.0
+        data_band[keys[9]][0][1, 1] = 12.0
+        data_band[keys[10]][0][0, 0] = 6.0
+        data_band[keys[10]][0][1, 0] = 2.5
+
+        num_val_pixels = premod.get_qualityband_count(data_qual)
+        min_numpix_required = float(int((10.0/100.) * len(keys)))
+
+        stats = premod.generate_tile_spatial_stats(data_band)
+        clean_data = premod.apply_threshold(data_band, 2, stats, num_val_pixels, min_numpix_required)
+
+        daily_mean, monthly_mean, yearly_mean = premod.temporal_average(clean_data)
+
+        self.assertEqual(monthly_mean[1]['iso_mean'][1, 1], 8.0)
+        self.assertEqual(daily_mean[1]['iso_mean'][1, 0], 3.75)
+        self.assertEqual(yearly_mean[2011]['iso_mean'][1, 1], 7.6)
+
+
+if __name__ == '__main__':
     
     unittest.main()

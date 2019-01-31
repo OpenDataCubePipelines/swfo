@@ -193,9 +193,10 @@ def get_qualityband_count(quality_data=None):
     the num of valid pixels
     """
 
-    data = [quality_data[key] for key in quality_data.keys()]
-    num_val_pixels = len(quality_data) - np.sum(data, axis=0)
-    
+    data = np.array([quality_data[key] for key in quality_data.keys()])
+    data_sum = (np.nansum(data, axis=0))
+    data_sum[np.all(np.isnan(data), axis=0)] = np.nan
+    num_val_pixels = len(quality_data) - data_sum
     return np.array(num_val_pixels)
 
 
@@ -375,7 +376,7 @@ def main(brdf_dir=None, band=None, apply_scale=None, doy=None, year_from=None, t
     min_numpix_required = float(int((pthresh / 100.0) * len(sds_data)))
     # print(type(min_numpix_required))
 
-    # quality band counts required to check if
+    # get counts of good pixel quality
     quality_count = get_qualityband_count(quality_data=qual_data)
     # quality_count[2209, 2209] = -111.
     # print(quality_count[2200:2210, 2200:2210])
@@ -387,7 +388,6 @@ def main(brdf_dir=None, band=None, apply_scale=None, doy=None, year_from=None, t
     # compute daily, monthly and yearly mean from clean data sets
     daily_mean, monthly_mean, yearly_mean = temporal_average(data_clean)
 
-    print(monthly_mean)
 
 if __name__ == "__main__":
     # brdf_dir = '/g/data/u46/users/pd1813/BRDF_PARAM/MCD43A1_C6_HDF5_TILE_DATASET/'

@@ -100,7 +100,7 @@ class BrdfModuleTest(unittest.TestCase):
         self.assertEqual(clean_data[keys[8]]['iso_clean'][4, 4], 11.0)
         self.assertEqual(clean_data[keys[9]]['iso_clean'][4, 4], 11.0)
 
-        # test to check if threshold failed idx are replaced with median values
+        # test to check if threshold failed index are replaced with median values
         self.assertEqual(clean_data[keys[0]]['iso_clean'][1, 0], 5.0)
         self.assertEqual(clean_data[keys[9]]['iso_clean'][1, 0], 5.0)
         self.assertEqual(clean_data[keys[8]]['iso_clean'][1, 0], 5.0)

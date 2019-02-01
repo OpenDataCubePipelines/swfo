@@ -4,8 +4,10 @@
 BRDF data extraction utilities from hdf5 files
 """
 
+import sys
 import os
-from os.path import join as pjoin
+from os.path import join as pjoin, basename
+import rasterio
 import h5py
 import fnmatch
 import datetime
@@ -150,34 +152,33 @@ def get_sds_doy_dataset(dirs=None, dayofyear=None, sds_name=None, year=None, til
         yr = dt.timetuple().tm_year
 
         if doy < dayofyear and yr > year:
-
             h5_file = (h5_info[k][tile])
             print(h5_file)
             with h5py.File(h5_file, 'r') as fid:
-                for band in fid:
-                    if band == sds_name:
-                        ds = fid[band]
-                        sds_data = ds[:]
-                        if len(ds.shape) == 3:
-                            scale_factor = float(ds.attrs['scale_factor'])
-                            add_offset = float(ds.attrs['add_offset'])
-                            nodata = float(ds.attrs['_FillValue'])
-                            sds_data = sds_data.astype('float32')
-                            sds_data[sds_data == float(nodata)] = np.nan
 
-                        else:
-                            scale_factor = 1.0
-                            add_offset = 0.0
-                            nodata = float(ds.attrs['_FillValue'])
-                            sds_data = sds_data.astype('float32')
-                            sds_data[sds_data == float(nodata)] = np.nan
+                ds = fid[sds_name]
+                # print([item for item in ds.attrs])
+                sds_data = ds[:]
+                if len(ds.shape) == 3:
+                    scale_factor = float(ds.attrs['scale_factor'])
+                    add_offset = float(ds.attrs['add_offset'])
+                    nodata = float(ds.attrs['_FillValue'])
+                    sds_data = sds_data.astype('float32')
+                    sds_data[sds_data == float(nodata)] = np.nan
 
-                        if apply_scale:
-                            sds_data = sds_data * scale_factor + add_offset
+                else:
+                    scale_factor = 1.0
+                    add_offset = 0.0
+                    nodata = float(ds.attrs['_FillValue'])
+                    sds_data = sds_data.astype('float32')
+                    sds_data[sds_data == float(nodata)] = np.nan
 
-                        data_dict[k] = sds_data
+                if apply_scale:
+                    sds_data = sds_data * scale_factor + add_offset
+
+                data_dict[k] = sds_data
     # print(json.dumps(data_dict, cls=JsonEncoder, indent=4))
-    return data_dict
+    return data_dict, h5_info
 
 
 def get_qualityband_count(quality_data=None):
@@ -197,6 +198,7 @@ def get_qualityband_count(quality_data=None):
     data_sum = (np.nansum(data, axis=0))
     data_sum[np.all(np.isnan(data), axis=0)] = np.nan
     num_val_pixels = len(quality_data) - data_sum
+
     return np.array(num_val_pixels)
 
 
@@ -309,7 +311,7 @@ def apply_threshold(data, filter_size, spatial_stats, quality_count, min_numpix_
     return data_clean
 
 
-def temporal_average(data):
+def temporal_average(data, h5_info=None, tile=None):
     """
     This function computes temporal average of data sets for same day of year (doy),
     same month (monthly), and same year(yearly).
@@ -328,6 +330,8 @@ def temporal_average(data):
     for d in set_doy:
         tmp = {}
         idx_doy = np.argwhere(np.array([dt.timetuple().tm_yday for dt in dt_list]) == d)
+        if h5_info:
+            tmp['data_id'] = {keys[idx][0]: h5_info[keys[idx][0]][tile] for idx in idx_doy}
         tmp['iso_mean'] = np.ma.mean(np.ma.array([data[keys[idx][0]]['iso_clean'] for idx in idx_doy]), axis=0)
         tmp['vol_mean'] = np.ma.mean(np.ma.array([data[keys[idx][0]]['vol_clean'] for idx in idx_doy]), axis=0)
         tmp['geo_mean'] = np.ma.mean(np.ma.array([data[keys[idx][0]]['geo_clean'] for idx in idx_doy]), axis=0)
@@ -336,6 +340,9 @@ def temporal_average(data):
     for m in set_mnt:
         tmp = {}
         idx_mnt = np.argwhere(np.array([dt.timetuple().tm_mon for dt in dt_list]) == m)
+        if h5_info:
+            tmp['data_id'] = {keys[idx][0]: h5_info[keys[idx][0]][tile] for idx in idx_mnt}
+
         tmp['iso_mean'] = np.ma.mean(np.ma.array([data[keys[idx][0]]['iso_clean'] for idx in idx_mnt]), axis=0)
         tmp['vol_mean'] = np.ma.mean(np.ma.array([data[keys[idx][0]]['vol_clean'] for idx in idx_mnt]), axis=0)
         tmp['geo_mean'] = np.ma.mean(np.ma.array([data[keys[idx][0]]['geo_clean'] for idx in idx_mnt]), axis=0)
@@ -344,6 +351,8 @@ def temporal_average(data):
     for y in set_yr:
         tmp = {}
         idx_yr = np.argwhere(np.array([dt.timetuple().tm_year for dt in dt_list]) == y)
+        if h5_info:
+            tmp['data_id'] = {keys[idx][0]: h5_info[keys[idx][0]][tile] for idx in idx_yr}
         tmp['iso_mean'] = np.ma.mean(np.ma.array([data[keys[idx][0]]['iso_clean'] for idx in idx_yr]), axis=0)
         tmp['vol_mean'] = np.ma.mean(np.ma.array([data[keys[idx][0]]['vol_clean'] for idx in idx_yr]), axis=0)
         tmp['geo_mean'] = np.ma.mean(np.ma.array([data[keys[idx][0]]['geo_clean'] for idx in idx_yr]), axis=0)
@@ -352,20 +361,46 @@ def temporal_average(data):
     return daily_mean, monthly_mean, yearly_mean
 
 
-def main(brdf_dir=None, band=None, apply_scale=None, doy=None, year_from=None, tile=None):
+def write_h5(data_dict, band_name, tile, outdir, tag=None):
+    """
+    write numpy array to to h5 files with user supplied attributes
+    and compression
+    """
 
-    pthresh = 10
-    filter_size = 4
+    for key in data_dict.keys():
+
+        h5_files = [data_dict[key]['data_id'][k] for k in data_dict[key]['data_id'].keys()]
+        attrs = {}
+        with h5py.File(h5_files[0], 'r') as fid:
+            ds = fid[band_name]
+            attrs['description'] = ds.attrs['LONGNAME']
+            attrs['long_name'] = band_name
+            attrs['crs_wkt'] = ds.attrs['crs_wkt']
+            attrs['geotransform'] = ds.attrs['geotransform']
+            attrs['add_offset'] = 0
+            attrs['scale_factor'] = 0.0001
+            attrs['_FillValue'] = 32767
+        data = np.ma.array([data_dict[key]['iso_mean'], data_dict[key]['vol_mean'], data_dict[key]['geo_mean']])
+        data = data * 10000
+        data = data.filled(fill_value=32767).astype(np.int16)
+        print(data.shape)
+
+        print(json.dumps(attrs, cls=JsonEncoder, indent=4))
+        # TODO write data to h5 file after setting chunk size and filter options
+
+
+def main(brdf_dir=None, band=None, apply_scale=True, doy=None, year_from=None,
+         tile=None, outdir=None, filter_size=None, pthresh=10.0):
 
     sds_databand_name = SDS_BAND_NAME['{b}'.format(b=band)]
     sds_qualityband_name = SDS_BAND_NAME['QUAL_{b}'.format(b=band)]
 
     # get a list data sets for given tile for particular date and tile
-    sds_data = get_sds_doy_dataset(dirs=brdf_dir, dayofyear=doy, sds_name=sds_databand_name,
-                                   year=year_from, tile=tile, apply_scale=apply_scale)
+    sds_data, h5_info = get_sds_doy_dataset(dirs=brdf_dir, dayofyear=doy, sds_name=sds_databand_name,
+                                            year=year_from, tile=tile, apply_scale=apply_scale)
 
-    qual_data = get_sds_doy_dataset(dirs=brdf_dir, dayofyear=doy, sds_name=sds_qualityband_name,
-                                    year=year_from, tile=tile, apply_scale=apply_scale)
+    qual_data, _ = get_sds_doy_dataset(dirs=brdf_dir, dayofyear=doy, sds_name=sds_qualityband_name,
+                                       year=year_from, tile=tile, apply_scale=apply_scale)
 
     # spatial stats required to set the threshold value
     tile_spatial_stats = generate_tile_spatial_stats(sds_data)
@@ -386,7 +421,16 @@ def main(brdf_dir=None, band=None, apply_scale=None, doy=None, year_from=None, t
     data_clean = apply_threshold(sds_data, filter_size, tile_spatial_stats, quality_count, min_numpix_required)
 
     # compute daily, monthly and yearly mean from clean data sets
-    daily_mean, monthly_mean, yearly_mean = temporal_average(data_clean)
+    daily_mean, monthly_mean, yearly_mean = temporal_average(data_clean, h5_info=h5_info, tile=tile)
+
+    write_h5(daily_mean, sds_databand_name, tile, outdir, tag='Daily')
+    # for k in monthly_mean.keys():
+    #     print(monthly_mean[k])
+    #     data = daily_mean[k]['iso_mean']
+    #     print(sys.getsizeof(data))
+    #     data = data * 10000
+    #     data = data.filled(fill_value=32767).astype(np.int16)
+    #     print(sys.getsizeof(data))
 
 
 if __name__ == "__main__":
@@ -394,9 +438,11 @@ if __name__ == "__main__":
     brdf_dir = '/g/data/u46/users/ia1511/Work/data/brdf-collection-6/reprocessed/'
     band = "BAND1"
     tile = 'h29v10'
+    pthresh = 10.0
     apply_scale = True
     doy = 10  # subset for which doy to be processed
     year_from = 2002  # subset from which year to be processed
-    main(brdf_dir=brdf_dir, band=band, apply_scale=apply_scale, doy=doy, year_from=year_from, tile=tile)
+    main(brdf_dir=brdf_dir, band=band, apply_scale=apply_scale, doy=doy, year_from=year_from, tile=tile,
+         filter_size=4, pthresh=pthresh)
 
 

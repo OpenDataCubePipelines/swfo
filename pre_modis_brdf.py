@@ -6,13 +6,15 @@ BRDF data extraction utilities from hdf5 files
 
 import sys
 import os
+from pathlib import Path
 from os.path import join as pjoin, basename
-import rasterio
 import h5py
 import fnmatch
 import datetime
 import numpy as np
 import json
+from wagl.hdf5.compression import H5CompressionFilter
+from wagl.hdf5 import write_h5_image, attach_attributes, attach_image_attributes
 
 
 SDS_ATTRS_PREFIX = {'crs_wkt': 'crs_wkt',
@@ -175,9 +177,9 @@ def get_sds_doy_dataset(dirs=None, dayofyear=None, sds_name=None, year=None, til
 
                 if apply_scale:
                     sds_data = sds_data * scale_factor + add_offset
-
                 data_dict[k] = sds_data
     # print(json.dumps(data_dict, cls=JsonEncoder, indent=4))
+    # print(sys.getsizeof(data_dict))
     return data_dict, h5_info
 
 
@@ -307,7 +309,6 @@ def apply_threshold(data, filter_size, spatial_stats, quality_count, min_numpix_
         temp['geo_clean'] = geo_clean
 
         data_clean[keys[i]] = temp
-
     return data_clean
 
 
@@ -316,6 +317,7 @@ def temporal_average(data, h5_info=None, tile=None):
     This function computes temporal average of data sets for same day of year (doy),
     same month (monthly), and same year(yearly).
     """
+
     keys = np.array([k for k in data.keys()])
 
     key_fmt = '%Y.%m.%d'
@@ -361,32 +363,62 @@ def temporal_average(data, h5_info=None, tile=None):
     return daily_mean, monthly_mean, yearly_mean
 
 
-def write_h5(data_dict, band_name, tile, outdir, tag=None):
+def write_h5(data_dict, band_name, tile, outdir, tag=None, filter_opts=None,
+             compression=H5CompressionFilter.LZF):
     """
     write numpy array to to h5 files with user supplied attributes
     and compression
     """
-
     for key in data_dict.keys():
 
-        h5_files = [data_dict[key]['data_id'][k] for k in data_dict[key]['data_id'].keys()]
-        attrs = {}
-        with h5py.File(h5_files[0], 'r') as fid:
-            ds = fid[band_name]
-            attrs['description'] = ds.attrs['LONGNAME']
-            attrs['long_name'] = band_name
-            attrs['crs_wkt'] = ds.attrs['crs_wkt']
-            attrs['geotransform'] = ds.attrs['geotransform']
-            attrs['add_offset'] = 0
-            attrs['scale_factor'] = 0.0001
-            attrs['_FillValue'] = 32767
-        data = np.ma.array([data_dict[key]['iso_mean'], data_dict[key]['vol_mean'], data_dict[key]['geo_mean']])
-        data = data * 10000
-        data = data.filled(fill_value=32767).astype(np.int16)
-        print(data.shape)
+        if tag is 'Daily':
+            tag1 = 'DOY'
+            tag2 = '{:03}'.format(key)
 
-        print(json.dumps(attrs, cls=JsonEncoder, indent=4))
-        # TODO write data to h5 file after setting chunk size and filter options
+        elif tag is 'Monthly':
+            tag1 = 'MONTH'
+            tag2 = '{:02}'.format(key)
+
+        elif tag is 'Yearly':
+            tag1 = 'YEAR'
+            tag2 = key
+
+        else:
+            raise ValueError('tag is not defined: options are {Daily, Monthly, Yearly}')
+
+        outfile = pjoin(outdir, 'MCD43A1.JLAV.{t1}.{t2}.{t3}.006.{b}.h5'.format(t1=tag1, t2=tag2, t3=tile,
+                                                                                b=band_name))
+
+        with h5py.File(outfile, 'w') as fid:
+            h5_files = [data_dict[key]['data_id'][k] for k in data_dict[key]['data_id'].keys()]
+            attrs = {}
+            with h5py.File(h5_files[0], 'r') as f:
+                ds = f[band_name]
+                attrs['description'] = ds.attrs['LONGNAME']
+                attrs['long_name'] = band_name
+                attrs['crs_wkt'] = ds.attrs['crs_wkt']
+                attrs['geotransform'] = ds.attrs['geotransform']
+                attrs['add_offset'] = 0
+                attrs['scale_factor'] = 0.0001
+                attrs['_FillValue'] = 32767
+                attrs['bands'] = "iso: 1, vol: 2, geo: 3"
+            #print(json.dumps(attrs, cls=JsonEncoder, indent=4))
+
+            chunks = (1, 240, 240)
+
+            if not filter_opts:
+                filter_opts = dict()
+                filter_opts['chunks'] = (1, 240, 240)
+            else:
+                filter_opts = filter_opts.copy()
+
+            if 'chunks' not in filter_opts:
+                filter_opts['chunks'] = chunks
+
+            data = np.ma.array([data_dict[key]['iso_mean'], data_dict[key]['vol_mean'], data_dict[key]['geo_mean']])
+            data = data * 10000
+            data = data.filled(fill_value=32767).astype(np.int16)
+            write_h5_image(data, band_name, fid, attrs=attrs, compression=compression, filter_opts=filter_opts)
 
 
 def main(brdf_dir=None, band=None, apply_scale=True, doy=None, year_from=None,
@@ -398,7 +430,6 @@ def main(brdf_dir=None, band=None, apply_scale=True, doy=None, year_from=None,
     # get a list data sets for given tile for particular date and tile
     sds_data, h5_info = get_sds_doy_dataset(dirs=brdf_dir, dayofyear=doy, sds_name=sds_databand_name,
                                             year=year_from, tile=tile, apply_scale=apply_scale)
-
     qual_data, _ = get_sds_doy_dataset(dirs=brdf_dir, dayofyear=doy, sds_name=sds_qualityband_name,
                                        year=year_from, tile=tile, apply_scale=apply_scale)
 
@@ -424,6 +455,9 @@ def main(brdf_dir=None, band=None, apply_scale=True, doy=None, year_from=None,
     daily_mean, monthly_mean, yearly_mean = temporal_average(data_clean, h5_info=h5_info, tile=tile)
 
     write_h5(daily_mean, sds_databand_name, tile, outdir, tag='Daily')
+    write_h5(monthly_mean, sds_databand_name, tile, outdir, tag='Monthly')
+    write_h5(yearly_mean, sds_databand_name, tile, outdir, tag='Yearly')
+
     # for k in monthly_mean.keys():
     #     print(monthly_mean[k])
     #     data = daily_mean[k]['iso_mean']
@@ -436,6 +470,7 @@ def main(brdf_dir=None, band=None, apply_scale=True, doy=None, year_from=None,
 if __name__ == "__main__":
     # brdf_dir = '/g/data/u46/users/pd1813/BRDF_PARAM/MCD43A1_C6_HDF5_TILE_DATASET/'
     brdf_dir = '/g/data/u46/users/ia1511/Work/data/brdf-collection-6/reprocessed/'
+    outdir = '/g/data/u46/users/pd1813/BRDF_PARAM/test_results/'
     band = "BAND1"
     tile = 'h29v10'
     pthresh = 10.0
@@ -443,6 +478,6 @@ if __name__ == "__main__":
     doy = 10  # subset for which doy to be processed
     year_from = 2002  # subset from which year to be processed
     main(brdf_dir=brdf_dir, band=band, apply_scale=apply_scale, doy=doy, year_from=year_from, tile=tile,
-         filter_size=4, pthresh=pthresh)
+         outdir=outdir, filter_size=4, pthresh=pthresh)
 
 

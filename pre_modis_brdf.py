@@ -15,7 +15,7 @@ import numpy as np
 import json
 from wagl.hdf5.compression import H5CompressionFilter
 from wagl.hdf5 import write_h5_image, attach_attributes, attach_image_attributes
-
+from memory_profiler import profile
 
 SDS_ATTRS_PREFIX = {'crs_wkt': 'crs_wkt',
                     'geotransform': 'geotransform',
@@ -41,8 +41,9 @@ SDS_BAND_NAME = {'BAND1': 'BRDF_Albedo_Parameters_Band1',
 TILE = ['h29v10', 'h30v10', 'h31v10', 'h32v10', 'h27v11', 'h28v11', 'h29v11', 'h30v11',
         'h31v11', 'h27v12', 'h28v12', 'h29v12', 'h30v12', 'h31v12', 'h28v13', 'h29v13']
 
-BRDF_PARAM = {'iso': 0, 'vol': 1, 'geo': 2}
-
+BRDF_PARAM_INDEX = {'iso': 0, 'vol': 1, 'geo': 2}
+BRDF_PARAM_CLEAN_NAME = {'iso': 'iso_clean', 'vol': 'vol_clean', 'geo': 'geo_clean'}
+BRDF_PARAM_MEAN = {'iso': 'iso_clean_mean', 'vol': 'vol_clean_mean', 'geo': 'geo_clean_mean'}
 
 class JsonEncoder(json.JSONEncoder):
     """
@@ -136,7 +137,7 @@ def generate_tile_spatial_stats(data_dict):
 def get_sds_doy_dataset(dirs=None, dayofyear=None, sds_name=None, year=None, tile=None, apply_scale=False):
     """
     returns a list of numpy array of specific sds data
-    for particular day for range of years( for all years > given year)
+    less than particular day of year( for all years > given year)
     from all the hdf5 files in a given directory
     """
 
@@ -231,29 +232,16 @@ def apply_threshold(data, filter_size, spatial_stats, quality_count, min_numpix_
     """
     keys = [k for k in data.keys()]
 
-    # get the data iso, vol and go from data which is a dict for all the keys and convert to numpy array
-    data_iso = np.ma.array([np.ma.masked_invalid(data[key][0]) for key in keys])
-    data_vol = np.ma.array([np.ma.masked_invalid(data[key][1]) for key in keys])
-    data_geo = np.ma.array([np.ma.masked_invalid(data[key][2]) for key in keys])
-
     # get threshold values 
     iso_threshold, vol_threshold, geo_threshold = get_threshold(spatial_stats)
-
-    # print(iso_threshold, vol_threshold, geo_threshold)
 
     # get the index where band_quality number is less the minimum number of valid pixels required
     bad_idx = np.where(quality_count < min_numpix_required)
 
-    # print(bad_idx)
-    # print(data_iso.mask)
-
-    # set indexes to compute temporal median filtering of the dataset as defined
-    # by a filter size with time step centered around data value
     data_clean = {}
     for i in range(len(keys)):
         temp = {}
-
-        # set the index's for the filter median filters
+        # set the index's for the median filters
         start_idx = i - filter_size
         end_idx = i + filter_size + 1
         if start_idx < 0:
@@ -261,65 +249,59 @@ def apply_threshold(data, filter_size, spatial_stats, quality_count, min_numpix_
         if end_idx > len(keys)-1:
             end_idx = len(keys)
 
-        # print(start_idx, end_idx)
+        for param in BRDF_PARAM_INDEX:
+            # get the data iso, vol or geo from data which is a dict for all the keys and convert to numpy array
+            data_param = np.ma.array([np.ma.masked_invalid(data[key][BRDF_PARAM_INDEX[param]]) for key in keys])
 
-        # extract the value for a key and mask invalid data
-        iso_clean = np.ma.masked_invalid(data_iso[i])
-        vol_clean = np.ma.masked_invalid(data_vol[i])
-        geo_clean = np.ma.masked_invalid(data_geo[i])
+            # extract the value for a key and mask invalid data
+            clean_data = np.ma.masked_invalid(data_param[i])
 
-        # print(keys[i])
-        # print(keys[start_idx:end_idx])
-        # print('iso')
-        # print(data_iso[start_idx:end_idx])
+            # get temporal local median value as set by filter size
+            local_median = np.ma.median(data_param[start_idx:end_idx], axis=0)
 
-        # get temporal local median value as set by filter size
-        iso_local_median = np.ma.median(data_iso[start_idx:end_idx], axis=0)
-        vol_local_median = np.ma.median(data_vol[start_idx:end_idx], axis=0)
-        geo_local_median = np.ma.median(data_geo[start_idx:end_idx], axis=0)
+            # set parameter index and names and get threshold value
+            if param is 'iso':
+                threshold = iso_threshold
+                param_name = BRDF_PARAM_CLEAN_NAME['iso']
+            elif param is 'vol':
+                threshold = vol_threshold
+                param_name = BRDF_PARAM_CLEAN_NAME['vol']
+            elif param is 'geo':
+                threshold = geo_threshold
+                param_name = BRDF_PARAM_CLEAN_NAME['geo']
+            else:
+                raise ValueError
 
-        # print('median')
-        # print(iso_local_median)
+            # apply threshold test to clean the data set
+            threshold_idx = np.ma.where(abs(local_median - clean_data) > threshold)
 
-        # apply threshold test to clean the data set
-        threshold_iso_idx = np.ma.where(abs(iso_local_median - iso_clean) > iso_threshold)
-        threshold_vol_idx = np.ma.where(abs(vol_local_median - vol_clean) > vol_threshold)
-        threshold_geo_idx = np.ma.where(abs(geo_local_median - geo_clean) > geo_threshold)
+            # replace the data which did not pass threshold test with temporal local median value
+            clean_data[threshold_idx] = local_median[threshold_idx]
 
-        # print(threshold_iso_idx)
-        # print(iso_clean.shape)
-
-        # replace the data which did not pass threshold test with temporal local median value
-        iso_clean[threshold_iso_idx] = iso_local_median[threshold_iso_idx]
-        vol_clean[threshold_vol_idx] = vol_local_median[threshold_vol_idx]
-        geo_clean[threshold_geo_idx] = geo_local_median[threshold_geo_idx]
-
-        # replace the data which were initially filled with running median with local median
-        iso_clean[bad_idx] = iso_local_median[bad_idx]
-        vol_clean[bad_idx] = iso_local_median[bad_idx]
-        geo_clean[bad_idx] = iso_local_median[bad_idx]
-
-        # print(iso_clean[2200:2210, 2200:2210])
-        # print(iso_local_median[2200:2210, 2200:2210])
-        # print('clean')
-        # print(iso_clean)
-        
-        temp['iso_clean'] = iso_clean
-        temp['vol_clean'] = vol_clean
-        temp['geo_clean'] = geo_clean
+            # replace bad index data with local median
+            clean_data[bad_idx] = local_median[bad_idx]
+            temp[param_name] = clean_data
 
         data_clean[keys[i]] = temp
+
     return data_clean
 
 
-def temporal_average(data, h5_info=None, tile=None):
+def temporal_average(data, h5_info=None, tile=None, tag=None):
     """
     This function computes temporal average of data sets for same day of year (doy),
-    same month (monthly), and same year(yearly).
+    same month (monthly), and same year(yearly) as determined from tags
+
+    returns the stats on the average using the mean, standard deviation and the number
+    of good quality data used in deriving the stats
+
+    In David document, Mean, Stdv, Num and Masks are returned for each temporal average,
+    here, we did not output mask because it can be inferred from the number of good
+    quality data.
+
     """
 
     keys = np.array([k for k in data.keys()])
-
     key_fmt = '%Y.%m.%d'
     dt_list = [datetime.datetime.strptime(item, key_fmt) for item in data.keys()]
 
@@ -327,40 +309,46 @@ def temporal_average(data, h5_info=None, tile=None):
     set_mnt = set([dt.timetuple().tm_mon for dt in dt_list])
     set_yr = set([dt.timetuple().tm_year for dt in dt_list])
 
-    daily_mean, monthly_mean, yearly_mean = {}, {}, {}
-
-    for d in set_doy:
+    def get_temporal_stats(idxs):
         tmp = {}
-        idx_doy = np.argwhere(np.array([dt.timetuple().tm_yday for dt in dt_list]) == d)
-        if h5_info:
-            tmp['data_id'] = {keys[idx][0]: h5_info[keys[idx][0]][tile] for idx in idx_doy}
-        tmp['iso_mean'] = np.ma.mean(np.ma.array([data[keys[idx][0]]['iso_clean'] for idx in idx_doy]), axis=0)
-        tmp['vol_mean'] = np.ma.mean(np.ma.array([data[keys[idx][0]]['vol_clean'] for idx in idx_doy]), axis=0)
-        tmp['geo_mean'] = np.ma.mean(np.ma.array([data[keys[idx][0]]['geo_clean'] for idx in idx_doy]), axis=0)
-        daily_mean[d] = tmp
+        for param in BRDF_PARAM_CLEAN_NAME:
+            data_param = np.ma.array([data[keys[idx][0]][BRDF_PARAM_CLEAN_NAME[param]] for idx in idxs])
+            tmp['{par}_mean'.format(par=BRDF_PARAM_CLEAN_NAME[param])] = np.ma.mean(data_param, axis=0)
+            tmp['{par}_std'.format(par=BRDF_PARAM_CLEAN_NAME[param])] = np.ma.std(data_param, axis=0)
+            tmp['{par}_num'.format(par=BRDF_PARAM_CLEAN_NAME[param])] = data_param.count(axis=0)
 
-    for m in set_mnt:
-        tmp = {}
-        idx_mnt = np.argwhere(np.array([dt.timetuple().tm_mon for dt in dt_list]) == m)
-        if h5_info:
-            tmp['data_id'] = {keys[idx][0]: h5_info[keys[idx][0]][tile] for idx in idx_mnt}
+        return tmp
 
-        tmp['iso_mean'] = np.ma.mean(np.ma.array([data[keys[idx][0]]['iso_clean'] for idx in idx_mnt]), axis=0)
-        tmp['vol_mean'] = np.ma.mean(np.ma.array([data[keys[idx][0]]['vol_clean'] for idx in idx_mnt]), axis=0)
-        tmp['geo_mean'] = np.ma.mean(np.ma.array([data[keys[idx][0]]['geo_clean'] for idx in idx_mnt]), axis=0)
-        monthly_mean[m] = tmp
+    if tag is "Daily":
+        daily_mean = {}
+        for d in set_doy:
+            idx_doy = np.argwhere(np.array([dt.timetuple().tm_yday for dt in dt_list]) == d)
+            tmp = get_temporal_stats(idx_doy)
+            if h5_info:
+                tmp['data_id'] = {keys[idx][0]: h5_info[keys[idx][0]][tile] for idx in idx_doy}
 
-    for y in set_yr:
-        tmp = {}
-        idx_yr = np.argwhere(np.array([dt.timetuple().tm_year for dt in dt_list]) == y)
-        if h5_info:
-            tmp['data_id'] = {keys[idx][0]: h5_info[keys[idx][0]][tile] for idx in idx_yr}
-        tmp['iso_mean'] = np.ma.mean(np.ma.array([data[keys[idx][0]]['iso_clean'] for idx in idx_yr]), axis=0)
-        tmp['vol_mean'] = np.ma.mean(np.ma.array([data[keys[idx][0]]['vol_clean'] for idx in idx_yr]), axis=0)
-        tmp['geo_mean'] = np.ma.mean(np.ma.array([data[keys[idx][0]]['geo_clean'] for idx in idx_yr]), axis=0)
-        yearly_mean[y] = tmp
+            daily_mean[d] = tmp
+        return daily_mean
 
-    return daily_mean, monthly_mean, yearly_mean
+    if tag is 'Monthly':
+        monthly_mean = {}
+        for m in set_mnt:
+            idx_mnt = np.argwhere(np.array([dt.timetuple().tm_mon for dt in dt_list]) == m)
+            tmp = get_temporal_stats(idx_mnt)
+            if h5_info:
+                tmp['data_id'] = {keys[idx][0]: h5_info[keys[idx][0]][tile] for idx in idx_mnt}
+            monthly_mean[m] = tmp
+        return monthly_mean
+
+    if tag is 'Yearly':
+        yearly_mean = {}
+        for y in set_yr:
+            idx_yr = np.argwhere(np.array([dt.timetuple().tm_year for dt in dt_list]) == y)
+            tmp = get_temporal_stats(idx_yr)
+            if h5_info:
+                tmp['data_id'] = {keys[idx][0]: h5_info[keys[idx][0]][tile] for idx in idx_yr}
+            yearly_mean[y] = tmp
+        return yearly_mean
 
 
 def write_h5(data_dict, band_name, tile, outdir, tag=None, filter_opts=None,
@@ -395,13 +383,14 @@ def write_h5(data_dict, band_name, tile, outdir, tag=None, filter_opts=None,
             with h5py.File(h5_files[0], 'r') as f:
                 ds = f[band_name]
                 attrs['description'] = ds.attrs['LONGNAME']
-                attrs['long_name'] = band_name
                 attrs['crs_wkt'] = ds.attrs['crs_wkt']
                 attrs['geotransform'] = ds.attrs['geotransform']
-                attrs['add_offset'] = 0
-                attrs['scale_factor'] = 0.0001
-                attrs['_FillValue'] = 32767
-                attrs['bands'] = "iso: 1, vol: 2, geo: 3"
+
+            attrs['long_name'] = band_name
+            attrs['add_offset'] = 0
+            attrs['scale_factor'] = 0.0001
+            attrs['_FillValue'] = 32767
+            attrs['bands'] = "iso: 1, vol: 2, geo: 3"
             #print(json.dumps(attrs, cls=JsonEncoder, indent=4))
 
             chunks = (1, 240, 240)
@@ -415,12 +404,13 @@ def write_h5(data_dict, band_name, tile, outdir, tag=None, filter_opts=None,
             if 'chunks' not in filter_opts:
                 filter_opts['chunks'] = chunks
 
-            data = np.ma.array([data_dict[key]['iso_mean'], data_dict[key]['vol_mean'], data_dict[key]['geo_mean']])
+            data = np.ma.array([data_dict[key][BRDF_PARAM_MEAN['iso']], data_dict[key][BRDF_PARAM_MEAN['vol']],
+                                data_dict[key][BRDF_PARAM_MEAN['geo']]])
             data = data * 10000
             data = data.filled(fill_value=32767).astype(np.int16)
             write_h5_image(data, band_name, fid, attrs=attrs, compression=compression, filter_opts=filter_opts)
 
-
+@profile
 def main(brdf_dir=None, band=None, apply_scale=True, doy=None, year_from=None,
          tile=None, outdir=None, filter_size=None, pthresh=10.0):
 
@@ -435,36 +425,26 @@ def main(brdf_dir=None, band=None, apply_scale=True, doy=None, year_from=None,
 
     # spatial stats required to set the threshold value
     tile_spatial_stats = generate_tile_spatial_stats(sds_data)
-    # print(json.dumps(tile_spatial_stats, cls=JsonEncoder, indent=4))
 
     # generate number of valid pixel count required for analysis in a time series stack
     # as defined in David Jubb's BRDF document
     min_numpix_required = float(int((pthresh / 100.0) * len(sds_data)))
-    # print(type(min_numpix_required))
 
     # get counts of good pixel quality
     quality_count = get_qualityband_count(quality_data=qual_data)
-    # quality_count[2209, 2209] = -111.
-    # print(quality_count[2200:2210, 2200:2210])
 
     quality_count = np.ma.masked_invalid(quality_count)
 
     data_clean = apply_threshold(sds_data, filter_size, tile_spatial_stats, quality_count, min_numpix_required)
 
+    # free some memory
+    sds_data, qual_data = None, None
+
     # compute daily, monthly and yearly mean from clean data sets
-    daily_mean, monthly_mean, yearly_mean = temporal_average(data_clean, h5_info=h5_info, tile=tile)
-
-    write_h5(daily_mean, sds_databand_name, tile, outdir, tag='Daily')
-    write_h5(monthly_mean, sds_databand_name, tile, outdir, tag='Monthly')
-    write_h5(yearly_mean, sds_databand_name, tile, outdir, tag='Yearly')
-
-    # for k in monthly_mean.keys():
-    #     print(monthly_mean[k])
-    #     data = daily_mean[k]['iso_mean']
-    #     print(sys.getsizeof(data))
-    #     data = data * 10000
-    #     data = data.filled(fill_value=32767).astype(np.int16)
-    #     print(sys.getsizeof(data))
+    tags = ["Daily", "Monthly", "Yearly"]
+    for tag in tags:
+        avg_data = temporal_average(data_clean, h5_info=h5_info, tile=tile, tag=tag)
+        write_h5(avg_data, sds_databand_name, tile, outdir, tag=tag)
 
 
 if __name__ == "__main__":

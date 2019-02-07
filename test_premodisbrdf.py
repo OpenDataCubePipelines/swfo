@@ -130,11 +130,13 @@ class BrdfModuleTest(unittest.TestCase):
         stats = premod.generate_tile_spatial_stats(data_band)
         clean_data = premod.apply_threshold(data_band, 2, stats, num_val_pixels, min_numpix_required)
 
-        daily_mean, monthly_mean, yearly_mean = premod.temporal_average(clean_data)
+        monthly_mean = premod.temporal_average(clean_data, tag="Monthly")
+        daily_mean = premod.temporal_average(clean_data, tag="Daily")
+        yearly_mean = premod.temporal_average(clean_data, tag="Yearly")
 
-        self.assertEqual(monthly_mean[1]['iso_mean'][1, 1], 8.0)
-        self.assertEqual(daily_mean[1]['iso_mean'][1, 0], 3.75)
-        self.assertEqual(yearly_mean[2011]['iso_mean'][1, 1], 7.6)
+        self.assertEqual(monthly_mean[1]['iso_clean_mean'][1, 1], 8.0)
+        self.assertEqual(daily_mean[1]['iso_clean_mean'][1, 0], 3.75)
+        self.assertEqual(yearly_mean[2011]['iso_clean_mean'][1, 1], 7.6)
 
 
 if __name__ == '__main__':

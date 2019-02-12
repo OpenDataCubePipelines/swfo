@@ -80,6 +80,16 @@ def convert_tile(fname, out_fname, compression, filter_opts):
                     attrs['geotransform'] = sds.transform.to_gdal()
                     attrs['crs_wkt'] = sds.crs.wkt
 
+                    converters = {
+                        '_FillValue': int,
+                        'scale_factor': float,
+                        'add_offset': float
+                    }
+
+                    for key in converters:
+                        if key in attrs:
+                            attrs[key] = converters[key](attrs[key])
+
                     # ensure single band sds is read a 2D not 3D
                     data = sds.read() if sds.count == 3 else sds.read(1)
 

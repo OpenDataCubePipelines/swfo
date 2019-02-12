@@ -16,6 +16,7 @@ import json
 from wagl.hdf5.compression import H5CompressionFilter
 from wagl.hdf5 import write_h5_image, attach_attributes, attach_image_attributes
 from memory_profiler import profile
+import brdf_shape
 
 SDS_ATTRS_PREFIX = {'crs_wkt': 'crs_wkt',
                     'geotransform': 'geotransform',
@@ -44,6 +45,9 @@ TILE = ['h29v10', 'h30v10', 'h31v10', 'h32v10', 'h27v11', 'h28v11', 'h29v11', 'h
 BRDF_PARAM_INDEX = {'iso': 0, 'vol': 1, 'geo': 2}
 BRDF_PARAM_CLEAN_NAME = {'iso': 'iso_clean', 'vol': 'vol_clean', 'geo': 'geo_clean'}
 BRDF_PARAM_MEAN = {'iso': 'iso_clean_mean', 'vol': 'vol_clean_mean', 'geo': 'geo_clean_mean'}
+BRDF_PARAM_STDV = {'iso': 'iso_clean_std', 'vol': 'vol_clean_std', 'geo': 'geo_clean_std'}
+BRDF_PARAM_NUM = {'iso': 'iso_clean_num', 'vol': 'vol_clean_num', 'geo': 'geo_clean_num'}
+
 
 class JsonEncoder(json.JSONEncoder):
     """
@@ -300,7 +304,6 @@ def temporal_average(data, h5_info=None, tile=None, tag=None):
     quality data.
 
     """
-
     keys = np.array([k for k in data.keys()])
     key_fmt = '%Y.%m.%d'
     dt_list = [datetime.datetime.strptime(item, key_fmt) for item in data.keys()]
@@ -316,7 +319,6 @@ def temporal_average(data, h5_info=None, tile=None, tag=None):
             tmp['{par}_mean'.format(par=BRDF_PARAM_CLEAN_NAME[param])] = np.ma.mean(data_param, axis=0)
             tmp['{par}_std'.format(par=BRDF_PARAM_CLEAN_NAME[param])] = np.ma.std(data_param, axis=0)
             tmp['{par}_num'.format(par=BRDF_PARAM_CLEAN_NAME[param])] = data_param.count(axis=0)
-
         return tmp
 
     if tag is "Daily":
@@ -350,6 +352,98 @@ def temporal_average(data, h5_info=None, tile=None, tag=None):
             yearly_mean[y] = tmp
         return yearly_mean
 
+@profile
+def brdf_indices_quality_check(avg_data=None):
+    """
+    This function performs the quality check on the temporal averages data.
+    The quality check is performed in following steps:
+        1. data are masked if any of the iso, vol and geo data are not valid.
+        2. data are further masked if data are greater or less than valid range
+           of brdf shape indices rms and afx (max and min values are sourced
+           from MODIS_BRDF_MCD43A_Processing_v2' by David's Jubb 2018).
+        3. Additional mask based on the requirement (b2 >= ac) is applied
+           (parameters definition are based on BRDF_shape_parameters_and_indices'
+           by David Jubb 2018.
+
+    :param avg_data:
+         A 'dict' type data set that contains the numpy array type dataset with
+         temporal average of clean brdf parameters (iso, vol, and geo) and
+         its associated standard deviation and number of observations used
+         to generate the temporal average.
+
+    :return filtered_data:
+         A 'dict' type data that contains the filtered data of brdf
+         shape function (alpha1 and alpha2) in lognormal space. Additional
+         data, mean brdf iso parameter, shape indices (rms and afx), mask
+         and number of observations used in generating shape function are
+         also included.
+
+    """
+    filtered_data = {}
+    for key in avg_data.keys():
+        # set the mean brdf data from the avg_data dict for each keys
+        iso_mean = avg_data[key][BRDF_PARAM_MEAN['iso']]
+        vol_mean = avg_data[key][BRDF_PARAM_MEAN['vol']]
+        geo_mean = avg_data[key][BRDF_PARAM_MEAN['geo']]
+
+        # generate new mask where all the iso, vol and geo brdf parameters are valid
+        mask_param = np.ma.mask_or(np.ma.mask_or(iso_mean.mask, vol_mean.mask), geo_mean.mask)
+
+        min_num = np.min(np.array([avg_data[key][BRDF_PARAM_NUM['iso']],
+                                   avg_data[key][BRDF_PARAM_NUM['vol']],
+                                   avg_data[key][BRDF_PARAM_NUM['geo']]]), axis=0)
+
+        # mask the brdf param with new mask that is generated from union of masks from
+        # individual brdf parameters (iso, vol, and geo)
+        iso_mean = np.ma.masked_array(iso_mean, mask=mask_param)
+        vol_mean = np.ma.masked_array(vol_mean, mask=mask_param)
+        geo_mean = np.ma.masked_array(geo_mean, mask=mask_param)
+
+        iso_std = np.ma.masked_array(avg_data[key][BRDF_PARAM_STDV['iso']], mask=mask_param)
+        # vol_std = np.ma.masked_array(avg_data[key][BRDF_PARAM_STDV['vol']], mask=mask_param)
+        # geo_std = np.ma.masked_array(avg_data[key][BRDF_PARAM_STDV['geo']], mask=mask_param)
+
+        # set coefficients of variation
+        cov_iso = iso_std / iso_mean
+        # cov_vol = vol_std / vol_mean
+        # cov_geo = geo_std / geo_mean
+
+        # set alpha1 and alpha2 in lognormal space
+        alpha1, alpha2 = brdf_shape.get_mean_shape_param(iso_mean, vol_mean, geo_mean, cov_iso)
+
+        # set afx and rms indices
+        afx = brdf_shape.get_afx_indices(alpha1, alpha2)
+        rms = brdf_shape.get_rms_indices(alpha1, alpha2)
+
+        # generate unfeasible afx and rms values masks from respective min and max values
+        # max and min for rms and afx is generated sourced from David's brdf document
+        rms_min_mask = np.ma.masked_where(rms < brdf_shape.CONSTANTS['rmsmin'], rms).mask
+        rms_max_mask = np.ma.masked_where(rms > brdf_shape.CONSTANTS['rmsmax'], rms).mask 
+        afx_min_mask = np.ma.masked_where(afx < brdf_shape.CONSTANTS['afxmin'], afx).mask 
+        afx_max_mask = np.ma.masked_where(afx > brdf_shape.CONSTANTS['afxmax'], afx).mask
+        rms_mask = np.ma.mask_or(rms_min_mask, rms_max_mask)
+        afx_mask = np.ma.mask_or(afx_min_mask, afx_max_mask)
+        rms_afx_mask = np.ma.mask_or(rms_mask, afx_mask)
+
+        # get brdf infeasible  mask
+        unfeasible_mask = brdf_shape.get_unfeasible_mask(rms, afx)
+
+        # final mask composed of all previous masks
+        combined_mask = np.ma.mask_or(rms_afx_mask, unfeasible_mask)
+
+        temp = {}
+        temp['data_id'] = avg_data[key]['data_id']
+        temp['iso_mean'] = np.ma.masked_array(iso_mean, mask=combined_mask)
+        temp['alpha1'] = np.ma.masked_array(alpha1, mask=combined_mask)
+        temp['alpha2'] = np.ma.masked_array(alpha2, mask=combined_mask)
+        temp['afx'] = np.ma.masked_array(rms, mask=combined_mask)
+        temp['rms'] = np.ma.masked_array(afx, mask=combined_mask)
+        temp['mask'] = np.array(combined_mask)
+        temp['num'] = np.array(min_num)
+        filtered_data[key] = temp
+
+    return filtered_data
+
 
 def write_h5(data_dict, band_name, tile, outdir, tag=None, filter_opts=None,
              compression=H5CompressionFilter.LZF):
@@ -379,38 +473,63 @@ def write_h5(data_dict, band_name, tile, outdir, tag=None, filter_opts=None,
 
         with h5py.File(outfile, 'w') as fid:
             h5_files = [data_dict[key]['data_id'][k] for k in data_dict[key]['data_id'].keys()]
-            attrs = {}
+            attrs, attrs_main, attrs_support, attrs_quality = {}, {}, {}, {}
             with h5py.File(h5_files[0], 'r') as f:
                 ds = f[band_name]
-                attrs['description'] = ds.attrs['LONGNAME']
                 attrs['crs_wkt'] = ds.attrs['crs_wkt']
                 attrs['geotransform'] = ds.attrs['geotransform']
 
-            attrs['long_name'] = band_name
-            attrs['add_offset'] = 0
-            attrs['scale_factor'] = 0.0001
-            attrs['_FillValue'] = 32767
-            attrs['bands'] = "iso: 1, vol: 2, geo: 3"
-            #print(json.dumps(attrs, cls=JsonEncoder, indent=4))
+            attrs_main['scale_factor'] = 0.0001
+            attrs_main['add_offset'] = 0
+            attrs_main['_FillValue'] = 32767
+            attrs_main['description'] = ('BRDF albedo shape parameters (alpha1 and alpha2) derived from {b} '
+                                         'in lognormal space'.format(b=band_name))
+            attrs_main['bands'] = "alpha1: 1, alpha2: 2"
+            attrs_main.update(**attrs)
+
+            attrs_support['scale_factor'] = 0.0001
+            attrs_support['add_offset'] = 0
+            attrs_support['_FillValue'] = 32767
+            attrs_support['description'] = ('BRDF Albedo ISO parameter and statistics (rms and afx) '
+                                            'generated to support future validation work')
+            attrs_support['bands'] = "iso_mean: 1, afx: 2, rms: 3"
+            attrs_support.update(**attrs)
+
+            attrs_quality['description'] = ('Mask and number of valid data used in generating BRDF Albedo '
+                                            'shape parameters')
+            attrs_quality['bands'] = "mask: 1, num: 2"
+            attrs_quality.update(**attrs)
 
             chunks = (1, 240, 240)
 
             if not filter_opts:
                 filter_opts = dict()
-                filter_opts['chunks'] = (1, 240, 240)
+                filter_opts['chunks'] = chunks
             else:
                 filter_opts = filter_opts.copy()
 
             if 'chunks' not in filter_opts:
                 filter_opts['chunks'] = chunks
 
-            data = np.ma.array([data_dict[key][BRDF_PARAM_MEAN['iso']], data_dict[key][BRDF_PARAM_MEAN['vol']],
-                                data_dict[key][BRDF_PARAM_MEAN['geo']]])
-            data = data * 10000
-            data = data.filled(fill_value=32767).astype(np.int16)
-            write_h5_image(data, band_name, fid, attrs=attrs, compression=compression, filter_opts=filter_opts)
+            data_main = np.ma.array([data_dict[key]['alpha1'], data_dict[key]['alpha2']])
+            data_support = np.ma.array([data_dict[key]['iso_mean'], data_dict[key]['afx'], data_dict[key]['rms']])
+            data_quality = np.array([data_dict[key]['mask'], data_dict[key]['num']])
 
-@profile
+            data_main = data_main * 10000
+            data_main = data_main.filled(fill_value=32767).astype(np.int16)
+            write_h5_image(data_main, 'BRDF_Albedo_Shape_Parameters', fid, attrs=attrs_main, compression=compression,
+                           filter_opts=filter_opts)
+
+            data_support = data_support * 10000
+            data_support = data_support.filled(fill_value=32767).astype(np.int16)
+            write_h5_image(data_support, 'BRDF_Albedo_Shape_Indices', fid, attrs=attrs_support, compression=compression,
+                           filter_opts=filter_opts)
+
+            data_quality = data_quality.astype(np.int16)
+            write_h5_image(data_quality, 'BRDF_Albedo_Shape_Parameters_Quality', fid, attrs=attrs_quality,
+                           compression=compression, filter_opts=filter_opts)
+
+
 def main(brdf_dir=None, band=None, apply_scale=True, doy=None, year_from=None,
          tile=None, outdir=None, filter_size=None, pthresh=10.0):
 
@@ -441,19 +560,20 @@ def main(brdf_dir=None, band=None, apply_scale=True, doy=None, year_from=None,
     sds_data, qual_data = None, None
 
     # compute daily, monthly and yearly mean from clean data sets
-    tags = ["Daily", "Monthly", "Yearly"]
+    tags = ["Monthly", "Daily", "Yearly"]
     for tag in tags:
         avg_data = temporal_average(data_clean, h5_info=h5_info, tile=tile, tag=tag)
-        write_h5(avg_data, sds_databand_name, tile, outdir, tag=tag)
+        filtered_data = brdf_indices_quality_check(avg_data=avg_data)
+        write_h5(filtered_data, sds_databand_name, tile, outdir, tag=tag)
 
 
 if __name__ == "__main__":
     # brdf_dir = '/g/data/u46/users/pd1813/BRDF_PARAM/MCD43A1_C6_HDF5_TILE_DATASET/'
-    brdf_dir = '/g/data/u46/users/ia1511/Work/data/brdf-collection-6/reprocessed/'
+    brdf_dir = '/g/data/u46/users/ia1511/Work/data/brdf-collection-6/old-reprocessed/'
     outdir = '/g/data/u46/users/pd1813/BRDF_PARAM/test_results/'
     band = "BAND1"
     tile = 'h29v10'
-    pthresh = 10.0
+    pthresh = 20.0
     apply_scale = True
     doy = 10  # subset for which doy to be processed
     year_from = 2002  # subset from which year to be processed

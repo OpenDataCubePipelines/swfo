@@ -15,7 +15,6 @@ import numpy as np
 import json
 from wagl.hdf5.compression import H5CompressionFilter
 from wagl.hdf5 import write_h5_image, attach_attributes, attach_image_attributes
-from memory_profiler import profile
 import brdf_shape
 
 SDS_ATTRS_PREFIX = {'crs_wkt': 'crs_wkt',
@@ -158,9 +157,9 @@ def get_sds_doy_dataset(dirs=None, dayofyear=None, sds_name=None, year=None, til
         doy = dt.timetuple().tm_yday
         yr = dt.timetuple().tm_year
 
-        if doy < dayofyear and yr > year:
+        if yr >= year:
             h5_file = (h5_info[k][tile])
-            print(h5_file)
+            print('loading', sds_name, 'from', h5_file)
             with h5py.File(h5_file, 'r') as fid:
 
                 ds = fid[sds_name]
@@ -352,7 +351,6 @@ def temporal_average(data, h5_info=None, tile=None, tag=None):
             yearly_mean[y] = tmp
         return yearly_mean
 
-@profile
 def brdf_indices_quality_check(avg_data=None):
     """
     This function performs the quality check on the temporal averages data.
@@ -560,7 +558,7 @@ def main(brdf_dir=None, band=None, apply_scale=True, doy=None, year_from=None,
     sds_data, qual_data = None, None
 
     # compute daily, monthly and yearly mean from clean data sets
-    tags = ["Monthly", "Daily", "Yearly"]
+    tags = ["Daily"]
     for tag in tags:
         avg_data = temporal_average(data_clean, h5_info=h5_info, tile=tile, tag=tag)
         filtered_data = brdf_indices_quality_check(avg_data=avg_data)
@@ -569,15 +567,13 @@ def main(brdf_dir=None, band=None, apply_scale=True, doy=None, year_from=None,
 
 if __name__ == "__main__":
     # brdf_dir = '/g/data/u46/users/pd1813/BRDF_PARAM/MCD43A1_C6_HDF5_TILE_DATASET/'
-    brdf_dir = '/g/data/u46/users/ia1511/Work/data/brdf-collection-6/old-reprocessed/'
-    outdir = '/g/data/u46/users/pd1813/BRDF_PARAM/test_results/'
+    brdf_dir = '/g/data/u46/users/ia1511/Work/data/brdf-collection-6/reprocessed/'
+    outdir = '/g/data/u46/users/ia1511/Work/data/brdf-collection-6/optimize/old_results/'
     band = "BAND1"
     tile = 'h29v10'
-    pthresh = 20.0
+    pthresh = 10.0
     apply_scale = True
-    doy = 10  # subset for which doy to be processed
-    year_from = 2002  # subset from which year to be processed
+    doy = 9  # subset for which doy to be processed
+    year_from = 2015  # subset from which year to be processed
     main(brdf_dir=brdf_dir, band=band, apply_scale=apply_scale, doy=doy, year_from=year_from, tile=tile,
          outdir=outdir, filter_size=4, pthresh=pthresh)
-
-

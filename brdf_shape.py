@@ -178,5 +178,4 @@ def get_unfeasible_mask(rms, afx):
     a = CONSTANTS['ra']
     b = CONSTANTS['rb'] * (afx - 1)
     c = CONSTANTS['rc'] * (afx - 1)**2 - rms**2
-
     return np.ma.masked_where(b**2 < a*c, rms).mask

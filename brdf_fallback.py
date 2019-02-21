@@ -6,11 +6,13 @@ BRDF data extraction utilities from hdf5 files
 
 import os
 from os.path import join as pjoin
-import datetime
+from datetime import datetime
 
 import fnmatch
 import h5py
 import numpy as np
+
+import click
 
 from wagl.hdf5.compression import H5CompressionFilter
 from wagl.hdf5 import attach_image_attributes
@@ -20,35 +22,33 @@ from wagl.constants import BrdfParameters
 import brdf_shape
 
 
-ALBEDO_BAND_NAME = {'Band1': 'BRDF_Albedo_Parameters_Band1',
-                    'Band2': 'BRDF_Albedo_Parameters_Band2',
-                    'Band3': 'BRDF_Albedo_Parameters_Band3',
-                    'Band4': 'BRDF_Albedo_Parameters_Band4',
-                    'Band5': 'BRDF_Albedo_Parameters_Band5',
-                    'Band6': 'BRDF_Albedo_Parameters_Band6',
-                    'Band7': 'BRDF_Albedo_Parameters_Band7'}
-
-QUALITY_BAND_NAME = {'Band1': 'BRDF_Albedo_Band_Mandatory_Quality_Band1',
-                     'Band2': 'BRDF_Albedo_Band_Mandatory_Quality_Band2',
-                     'Band3': 'BRDF_Albedo_Band_Mandatory_Quality_Band3',
-                     'Band4': 'BRDF_Albedo_Band_Mandatory_Quality_Band4',
-                     'Band5': 'BRDF_Albedo_Band_Mandatory_Quality_Band5',
-                     'Band6': 'BRDF_Albedo_Band_Mandatory_Quality_Band6',
-                     'Band7': 'BRDF_Albedo_Band_Mandatory_Quality_Band7'}
+BAND_LIST = ['Band{}'.format(band) for band in range(1, 8)]
 
 TILES = ['h29v10', 'h30v10', 'h31v10', 'h32v10', 'h27v11', 'h28v11', 'h29v11', 'h30v11',
          'h31v11', 'h27v12', 'h28v12', 'h29v12', 'h30v12', 'h31v12', 'h28v13', 'h29v13']
 
 
-def datetime_doy(dt):
-    return dt.timetuple().tm_yday
+def albedo_band_name(band):
+    return 'BRDF_Albedo_Parameters_{}'.format(band)
 
 
-def datetime_year(dt):
-    return dt.timetuple().tm_year
+def quality_band_name(band):
+    return 'BRDF_Albedo_Band_Mandatory_Quality_{}'.format(band)
 
 
-def get_h5_info(brdf_dir, tile, year_from=None):
+def folder_datetime(folder):
+    return datetime.strptime(folder, '%Y.%m.%d')
+
+
+def folder_doy(folder):
+    return folder_datetime(folder).timetuple().tm_yday
+
+
+def folder_year(folder):
+    return folder_datetime(folder).timetuple().tm_year
+
+
+def hdf5_files(brdf_dir, tile, year_from=None):
     """
     A function to extract relevant MODIS BRDF acquisition details
     from the root folder where BRDF data are stored.
@@ -62,37 +62,30 @@ def get_h5_info(brdf_dir, tile, year_from=None):
         which can be accessed through a key param defined by a folder name
 
     """
-    folder_fmt = '%Y.%m.%d'
     h5_info = {}
 
     for item in os.listdir(brdf_dir):
-        dt = datetime.datetime.strptime(item, folder_fmt)
-
-        if year_from is not None and datetime_year(dt) < year_from:
+        if year_from is not None and folder_year(item) < year_from:
             continue
 
         files = os.listdir(pjoin(brdf_dir, item))
 
         try:
             filename = fnmatch.filter(files, '*.{}.*.h5'.format(tile))[0]
-            file_path = pjoin(brdf_dir, item, filename)
-
-            h5_info[item] = dict(datetime=dt, path=file_path)
+            h5_info[item] = pjoin(brdf_dir, item, filename)
         except IndexError:
             pass
 
     return h5_info
 
 
-def select_doy(h5_info, doy):
-    return {key: value
-            for key, value in h5_info.items()
-            if datetime_doy(value['datetime']) == doy}
+def read_brdf_dataset(ds, window=None):
+    if window is None:
+        window = slice(None)
 
-
-def read_brdf_dataset(ds, window):
-    nodata = ds.attrs['_FillValue']
     data = ds[window]
+
+    nodata = ds.attrs['_FillValue']
     nodata_mask = (data == nodata)
     data = data.astype('float32')
     data[nodata_mask] = np.nan
@@ -105,27 +98,6 @@ def read_brdf_dataset(ds, window):
     scale_factor = ds.attrs['scale_factor']
     add_offset = ds.attrs['add_offset']
     return data * scale_factor + add_offset
-
-
-def spatial_standard_deviations(h5_info, band_name):
-    """
-    A function to perform base brdf parameter data check by
-    computing mean, standard deviation and coefficient of variation
-    across whole spatial (x, y dimension) for each time step from a
-    list of data.
-
-    This function assumes data in a list is a spatial 2 dims (x, y)
-    data
-    """
-
-    def std(day_data):
-        with h5py.File(day_data['path'], 'r') as fid:
-            return {key: np.nanstd(read_brdf_dataset(fid[band_name],
-                                                     (index, slice(None), slice(None))))
-                    for index, key in enumerate(BrdfParameters)}
-
-    return {key: std(value)
-            for key, value in h5_info.items()}
 
 
 def get_qualityband_count(h5_info, band_name):
@@ -141,9 +113,9 @@ def get_qualityband_count(h5_info, band_name):
     the num of valid pixels
     """
 
-    def read_quality_data(day_data):
-        with h5py.File(day_data['path'], 'r') as fid:
-            return 1. - read_brdf_dataset(fid[band_name], slice(None))
+    def read_quality_data(filename):
+        with h5py.File(filename, 'r') as fid:
+            return 1. - read_brdf_dataset(fid[band_name])
 
     first, *rest = list(h5_info)
 
@@ -162,7 +134,7 @@ def get_qualityband_count(h5_info, band_name):
     return data_sum
 
 
-def apply_threshold(h5_info, dayofyear, albedo_band_name, window, filter_size, spatial_std_dev, bad_indices):
+def apply_threshold(h5_info, dayofyear, band_name, window, filter_size, thresholds, bad_indices):
     """
     This function applies median filter on the dataset, median filter with size of
     (2 * filter_size + 1) is applied as a running median filter with time steps centered
@@ -174,19 +146,19 @@ def apply_threshold(h5_info, dayofyear, albedo_band_name, window, filter_size, s
     day [004, 005, 006, 007, 008 and 009] since day 010, 011, 012 are missing.
 
     """
-    all_data_keys = sorted(list(h5_info.keys()))
-    doy_data_keys = sorted(list(select_doy(h5_info, dayofyear)))
 
-    # get threshold values
-    thresholds = {param: np.mean([spatial_std_dev[key][param] for key in spatial_std_dev])
-                  for param in BrdfParameters}
+    all_data_keys = sorted(list(h5_info.keys()))
+    doy_data_keys = sorted([key for key in h5_info if folder_doy(key) == dayofyear])
+
+    def get_albedo_data(filename, window):
+        with h5py.File(filename, 'r') as fid:
+            return read_brdf_dataset(fid[band_name], window)
 
     data_clean = {}
     for index, key in enumerate(all_data_keys):
         if key not in doy_data_keys:
             continue
 
-        temp = {}
         # set the index's for the median filters
         start_idx = index - filter_size
         end_idx = index + filter_size + 1
@@ -195,12 +167,11 @@ def apply_threshold(h5_info, dayofyear, albedo_band_name, window, filter_size, s
         if end_idx > len(all_data_keys) - 1:
             end_idx = len(all_data_keys)
 
-        data = get_sds_doy_dataset({date: h5_info[date] for date in all_data_keys[start_idx:end_idx]},
-                                   albedo_band_name, window)
-
+        temp = {}
         for param_index, param in enumerate(BrdfParameters):
             # get the data iso, vol or geo from data which is a dict for all the keys and convert to numpy array
-            data_param = np.ma.array([np.ma.masked_invalid(data[key][param_index]) for key in data])
+            data_param = np.ma.array([np.ma.masked_invalid(get_albedo_data(h5_info[date], (param_index,) + window))
+                                      for date in all_data_keys[start_idx:end_idx]])
 
             # extract the value for a key and mask invalid data
             clean_data = np.ma.masked_invalid(data_param[index - start_idx])
@@ -223,7 +194,7 @@ def apply_threshold(h5_info, dayofyear, albedo_band_name, window, filter_size, s
     return data_clean
 
 
-def temporal_average(data, h5_info):
+def temporal_average(data):
     """
     This function computes temporal average.
 
@@ -236,10 +207,7 @@ def temporal_average(data, h5_info):
 
     """
     keys = np.array([k for k in data.keys()])
-    key_fmt = '%Y.%m.%d'
-    dt_list = [datetime.datetime.strptime(item, key_fmt) for item in data.keys()]
-
-    set_doy = {datetime_doy(dt) for dt in dt_list}
+    set_doy = {folder_doy(item) for item in data}
 
     def get_temporal_stats(idxs):
         tmp = {}
@@ -252,13 +220,29 @@ def temporal_average(data, h5_info):
 
     daily_mean = {}
     for d in set_doy:
-        idx_doy = np.argwhere(np.array([datetime_doy(dt) for dt in dt_list]) == d)
+        idx_doy = np.argwhere(np.array([folder_doy(item) for item in data]) == d)
         tmp = get_temporal_stats(idx_doy)
-        if h5_info:
-            tmp['data_id'] = {keys[idx][0]: h5_info[keys[idx][0]]['path'] for idx in idx_doy}
 
         daily_mean[d] = tmp
     return daily_mean
+
+
+def calculate_combined_mask(afx, rms):
+    # generate unfeasible afx and rms values masks from respective min and max values
+    # max and min for rms and afx is generated sourced from David's brdf document
+    rms_min_mask = np.ma.masked_where(rms < brdf_shape.CONSTANTS['rmsmin'], rms).mask
+    rms_max_mask = np.ma.masked_where(rms > brdf_shape.CONSTANTS['rmsmax'], rms).mask
+    afx_min_mask = np.ma.masked_where(afx < brdf_shape.CONSTANTS['afxmin'], afx).mask
+    afx_max_mask = np.ma.masked_where(afx > brdf_shape.CONSTANTS['afxmax'], afx).mask
+    rms_mask = np.ma.mask_or(rms_min_mask, rms_max_mask, shrink=False)
+    afx_mask = np.ma.mask_or(afx_min_mask, afx_max_mask, shrink=False)
+    rms_afx_mask = np.ma.mask_or(rms_mask, afx_mask, shrink=False)
+
+    # get brdf infeasible  mask
+    unfeasible_mask = brdf_shape.get_unfeasible_mask(rms, afx)
+
+    # final mask composed of all previous masks
+    return np.ma.mask_or(rms_afx_mask, unfeasible_mask, shrink=False)
 
 
 def brdf_indices_quality_check(avg_data=None):
@@ -320,24 +304,9 @@ def brdf_indices_quality_check(avg_data=None):
         afx = brdf_shape.get_afx_indices(alpha1, alpha2)
         rms = brdf_shape.get_rms_indices(alpha1, alpha2)
 
-        # generate unfeasible afx and rms values masks from respective min and max values
-        # max and min for rms and afx is generated sourced from David's brdf document
-        rms_min_mask = np.ma.masked_where(rms < brdf_shape.CONSTANTS['rmsmin'], rms).mask
-        rms_max_mask = np.ma.masked_where(rms > brdf_shape.CONSTANTS['rmsmax'], rms).mask
-        afx_min_mask = np.ma.masked_where(afx < brdf_shape.CONSTANTS['afxmin'], afx).mask
-        afx_max_mask = np.ma.masked_where(afx > brdf_shape.CONSTANTS['afxmax'], afx).mask
-        rms_mask = np.ma.mask_or(rms_min_mask, rms_max_mask, shrink=False)
-        afx_mask = np.ma.mask_or(afx_min_mask, afx_max_mask, shrink=False)
-        rms_afx_mask = np.ma.mask_or(rms_mask, afx_mask, shrink=False)
-
-        # get brdf infeasible  mask
-        unfeasible_mask = brdf_shape.get_unfeasible_mask(rms, afx)
-
-        # final mask composed of all previous masks
-        combined_mask = np.ma.mask_or(rms_afx_mask, unfeasible_mask, shrink=False)
+        combined_mask = calculate_combined_mask(afx, rms)
 
         temp = {}
-        temp['data_id'] = avg_data[key]['data_id']
         temp['iso_mean'] = np.ma.masked_array(iso_mean, mask=combined_mask)
         temp['alpha1'] = np.ma.masked_array(alpha1, mask=combined_mask)
         temp['alpha2'] = np.ma.masked_array(alpha2, mask=combined_mask)
@@ -350,13 +319,15 @@ def brdf_indices_quality_check(avg_data=None):
     return filtered_data
 
 
-def get_sds_doy_dataset(h5_info, band_name, window):
-    def get_data(day_info):
-        with h5py.File(day_info['path'], 'r') as fid:
-            ds = fid[band_name]
-            return read_brdf_dataset(ds, window)
+def calculate_thresholds(h5_info, band_name):
+    # spatial stats required to set the threshold value
+    def std(filename, index):
+        with h5py.File(filename, 'r') as fid:
+            return np.nanstd(read_brdf_dataset(fid[band_name], (index,)))
 
-    return {key: get_data(value) for key, value in h5_info.items()}
+    # get threshold values
+    return {param: np.mean(np.array([std(filename, index) for filename in h5_info.values()]))
+            for index, param in enumerate(BrdfParameters)}
 
 
 def create_dataset(group, band_name, shape, attrs,
@@ -386,7 +357,7 @@ def create_brdf_datasets(group, band_name, shape, common_attrs,
                  _FillValue=32767, bands="alpha1: 1, alpha2: 2",
                  description=('BRDF albedo shape parameters (alpha1 and alpha2)'
                               'derived from {}'
-                              'in lognormal space'.format(ALBEDO_BAND_NAME[band_name])),
+                              'in lognormal space'.format(albedo_band_name(band_name))),
                  **common_attrs)
     create_dataset(group, 'BRDF_Albedo_Shape_Parameters_{}'.format(band_name),
                    (2,) + shape, attrs,
@@ -437,70 +408,70 @@ def write_chunk(data_dict, fid, band_name, window):
 
 def get_band_info(h5_info, band_name):
     for date in h5_info:
-        with h5py.File(h5_info[date]['path'], 'r') as fid:
+        with h5py.File(h5_info[date], 'r') as fid:
             ds = fid[band_name]
             return ds.shape, {key: ds.attrs[key] for key in ['crs_wkt', 'geotransform']}
 
-    raise ValueError("no data")
+
+def write_brdf_fallback_band(fid, band, h5_info, dayofyear,
+                             min_numpix_required, filter_size, compute_chunks, data_chunks):
+    # get counts of good pixel quality
+    quality_count = get_qualityband_count(h5_info=h5_info, band_name=quality_band_name(band))
+    quality_count = np.ma.masked_invalid(quality_count)
+
+    # get the index where band_quality number is less the minimum number of valid pixels required
+    bad_indices = (quality_count < min_numpix_required).filled(False)
+    print('calculated bad pixels', np.where(bad_indices))
+
+    thresholds = calculate_thresholds(h5_info, albedo_band_name(band))
+    print('spatial stats', thresholds)
+
+    shape, attrs = get_band_info(h5_info, albedo_band_name(band))
+    shape = shape[-2:]
+    create_brdf_datasets(fid, band, shape, attrs, chunks=data_chunks)
+
+    for x, y in generate_tiles(shape[0], shape[1], compute_chunks[0], compute_chunks[1]):
+        window = (slice(*y), slice(*x))
+        print('processing [{}:{}] [{}:{}]'.format(y[0], y[1], x[0], x[1]))
+
+        data_clean = apply_threshold(h5_info, dayofyear,
+                                     albedo_band_name(band), window, filter_size, thresholds,
+                                     bad_indices[window])
+
+        # compute daily, monthly and yearly mean from clean data sets
+        avg_data = temporal_average(data_clean)
+        filtered_data = brdf_indices_quality_check(avg_data=avg_data)
+        write_chunk(filtered_data, fid, band, window=(slice(None),) + window)
 
 
 def write_brdf_fallback(brdf_dir, tile, dayofyear, outdir, filter_size,
                         pthresh=10.0, year_from=None, data_chunks=(1, 240, 240),
                         compute_chunks=(240, 240)):
+
+    h5_info = hdf5_files(brdf_dir, tile=tile, year_from=year_from)
+    print('got info for', len(h5_info), 'files')
+
+    # generate number of valid pixel count required for analysis in a time series stack
+    # as defined in David Jupp's BRDF document
+    min_numpix_required = int((pthresh / 100.0) * len(h5_info))
+    print('min pix required', min_numpix_required)
+
     outfile = pjoin(outdir, 'MCD43A1.JLAV.006.{}.DOY.{:03}.h5'.format(tile, dayofyear))
-
     with h5py.File(outfile, 'w') as fid:
-        for band in ALBEDO_BAND_NAME:
-            albedo_band_name = ALBEDO_BAND_NAME[band]
-            quality_band_name = QUALITY_BAND_NAME[band]
-
-            h5_info = get_h5_info(brdf_dir, tile=tile, year_from=year_from)
-            print('got file info')
-
-            # spatial stats required to set the threshold value
-            spatial_std_dev = spatial_standard_deviations(h5_info=h5_info,
-                                                          band_name=albedo_band_name)
-
-            print('spatial stats done')
-
-            # generate number of valid pixel count required for analysis in a time series stack
-            # as defined in David Jupp's BRDF document
-            min_numpix_required = int((pthresh / 100.0) * len(h5_info))
-
-            # get counts of good pixel quality
-            quality_count = get_qualityband_count(h5_info=h5_info, band_name=quality_band_name)
-            quality_count = np.ma.masked_invalid(quality_count)
-
-            # get the index where band_quality number is less the minimum number of valid pixels required
-            bad_indices = (quality_count < min_numpix_required).filled(False)
-
-            print('calculated bad pixels')
-
-            shape, attrs = get_band_info(h5_info, albedo_band_name)
-            shape = shape[-2:]
-            create_brdf_datasets(fid, band, shape, attrs, chunks=data_chunks)
-
-            for x, y in generate_tiles(shape[0], shape[1], compute_chunks[0], compute_chunks[1]):
-                window = (slice(None), slice(*y), slice(*x))
-                print('processing', window)
-
-                data_clean = apply_threshold(h5_info, dayofyear,
-                                             albedo_band_name, window, filter_size, spatial_std_dev,
-                                             bad_indices[window[1:]])
-
-                # compute daily, monthly and yearly mean from clean data sets
-                avg_data = temporal_average(data_clean, h5_info=h5_info)
-                filtered_data = brdf_indices_quality_check(avg_data=avg_data)
-                write_chunk(filtered_data, fid, band, window=window)
+        for band in BAND_LIST:
+            write_brdf_fallback_band(fid, band, h5_info, dayofyear,
+                                     min_numpix_required, filter_size, compute_chunks, data_chunks)
 
 
-def main():
-    brdf_dir = '/g/data/u46/users/ia1511/Work/data/brdf-collection-6/reprocessed/'
-    outdir = '/g/data/u46/users/ia1511/Work/data/brdf-collection-6/optimize/fallback_results/'
-    tile = 'h29v10'
-    dayofyear = 9  # subset for which doy to be processed
-    year_from = 2015  # subset from which year to be processed
-    write_brdf_fallback(brdf_dir, tile, dayofyear, outdir, filter_size=4, year_from=year_from)
+@click.command()
+@click.option('--brdf-dir', default='/g/data/u46/users/ia1511/Work/data/brdf-collection-6/reprocessed/')
+@click.option('--outdir', default='/g/data/u46/users/ia1511/Work/data/brdf-collection-6/optimize/fallback_results/')
+@click.option('--tile', default='h29v10')
+@click.option('--dayofyear', default=9)
+@click.option('--year-from', default=2015)
+@click.option('--filter-size', default=4)
+def main(brdf_dir, outdir, tile, dayofyear, year_from, filter_size):
+    write_brdf_fallback(brdf_dir, tile, dayofyear, outdir, filter_size, year_from=year_from)
 
 
 if __name__ == "__main__":

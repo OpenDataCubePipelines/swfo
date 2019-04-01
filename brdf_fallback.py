@@ -381,6 +381,20 @@ def create_brdf_datasets(group, band_name, shape, common_attrs,
                    chunks=chunks, filter_opts=filter_opts, compression=compression)
 
 
+def create_brdf_validate_datasets(group, band_name, shape, common_attrs,
+                                  chunks=(1, 240, 240), filter_opts=None,
+                                  compression=H5CompressionFilter.LZF):
+
+    attrs = dict(scale_factor=0.001, add_offset=0,
+            _FillValue=32767, bands="iso: 1, vol: 2, geo: 3",
+                 description=('BRDF Cleaned Dataset for band {}'.format(albedo_band_name(band_name))),
+                 **common_attrs)
+    create_dataset(group, 'BRDF_Cleaned_Dataset_{}'.format(band_name),
+                   (3,) + shape, attrs,
+                   chunks=chunks, filter_opts=filter_opts, compression=compression)
+
+
+
 def write_chunk(data_dict, fid, band_name, window):
     """
     write numpy array to to h5 files with user supplied attributes
@@ -404,6 +418,23 @@ def write_chunk(data_dict, fid, band_name, window):
 
     data_quality = data_quality.astype(np.int16)
     fid['BRDF_Albedo_Shape_Parameters_Quality_{}'.format(band_name)][window] = data_quality
+
+
+def write_validate_chunk(data_dict, fid, band_name, window):
+    """
+    write numpy array to to h5 files with user supplied attributes
+    and compression
+    """
+    # refactor?
+    assert len(data_dict) == 1
+    key = list(data_dict.keys())[0]
+    
+    data_support = np.ma.array([data_dict[key]['ISO'], data_dict[key]['VOL'], data_dict[key]['GEO']])
+
+    data_support = data_support * 1000
+    data_support = data_support.filled(fill_value=32767).astype(np.int16)
+    fid['BRDF_Cleaned_Dataset_{}'.format(band_name)][window] = data_support
+
 
 
 def get_band_info(h5_info, band_name):
@@ -444,6 +475,35 @@ def write_brdf_fallback_band(fid, band, h5_info, dayofyear,
         write_chunk(filtered_data, fid, band, window=(slice(None),) + window)
 
 
+
+def write_brdf_fallback_validate_band(fid, band, h5_info, dayofyear,
+                                      min_numpix_required, filter_size, compute_chunks, data_chunks):
+    # get counts of good pixel quality
+    quality_count = get_qualityband_count(h5_info=h5_info, band_name=quality_band_name(band))
+    quality_count = np.ma.masked_invalid(quality_count)
+
+    # get the index where band_quality number is less the minimum number of valid pixels required
+    bad_indices = (quality_count < min_numpix_required).filled(False)
+    print('calculated bad pixels', np.where(bad_indices))
+
+    thresholds = calculate_thresholds(h5_info, albedo_band_name(band))
+    print('spatial stats', thresholds)
+
+    shape, attrs = get_band_info(h5_info, albedo_band_name(band))
+    shape = shape[-2:]
+    create_brdf_validate_datasets(fid, band, shape, attrs, chunks=data_chunks)
+
+    for x, y in generate_tiles(shape[0], shape[1], compute_chunks[0], compute_chunks[1]):
+        window = (slice(*y), slice(*x))
+        print('processing [{}:{}] [{}:{}]'.format(y[0], y[1], x[0], x[1]))
+
+        data_clean = apply_threshold(h5_info, dayofyear,
+                                     albedo_band_name(band), window, filter_size, thresholds,
+                                     bad_indices[window])
+
+        write_validate_chunk(data_clean, fid, band, window=(slice(None),) + window)
+
+
 def write_brdf_fallback(brdf_dir, tile, dayofyear, outdir, filter_size,
                         pthresh=10.0, year_from=None, data_chunks=(1, 240, 240),
                         compute_chunks=(240, 240)):
@@ -462,6 +522,24 @@ def write_brdf_fallback(brdf_dir, tile, dayofyear, outdir, filter_size,
             write_brdf_fallback_band(fid, band, h5_info, dayofyear,
                                      min_numpix_required, filter_size, compute_chunks, data_chunks)
 
+
+def write_brdf_validata(brdf_dir, tile, dayofyear, outdir, filter_size,
+                        pthresh=10.0, year_from=None, data_chunks=(1, 240, 240),
+                        compute_chunks=(240, 240)):
+
+    h5_info = hdf5_files(brdf_dir, tile=tile, year_from=year_from)
+    print('got info for', len(h5_info), 'files')
+
+    # generate number of valid pixel count required for analysis in a time series stack
+    # as defined in David Jupp's BRDF document
+    min_numpix_required = int((pthresh / 100.0) * len(h5_info))
+    print('min pix required', min_numpix_required)
+
+    outfile = pjoin(outdir, 'MCD43A1.CLEAN_DATA.006.{}.DOY.{:03}.h5'.format(tile, dayofyear))
+    with h5py.File(outfile, 'w') as fid:
+        for band in BAND_LIST:
+            write_brdf_fallback_validate_band(fid, band, h5_info, dayofyear,
+                                              min_numpix_required, filter_size, compute_chunks, data_chunks)
 
 @click.command()
 @click.option('--brdf-dir', default='/g/data/u46/users/ia1511/Work/data/brdf-collection-6/reprocessed/')

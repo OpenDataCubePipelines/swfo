@@ -353,7 +353,7 @@ def create_brdf_datasets(group, band_name, shape, common_attrs,
                          chunks=(1, 240, 240), filter_opts=None,
                          compression=H5CompressionFilter.LZF):
 
-    attrs = dict(scale_factor=0.0001, add_offset=0,
+    attrs = dict(scale_factor=0.001, add_offset=0,
                  _FillValue=32767, bands="alpha1: 1, alpha2: 2",
                  description=('BRDF albedo shape parameters (alpha1 and alpha2)'
                               'derived from {}'
@@ -363,7 +363,7 @@ def create_brdf_datasets(group, band_name, shape, common_attrs,
                    (2,) + shape, attrs,
                    chunks=chunks, filter_opts=filter_opts, compression=compression)
 
-    attrs = dict(scale_factor=0.0001, add_offset=0,
+    attrs = dict(scale_factor=0.001, add_offset=0,
                  _FillValue=32767, bands="iso_mean: 1, afx: 2, rms: 3",
                  description=('BRDF Albedo ISO parameter and statistics (rms and afx)'
                               'generated to support future validation work'),
@@ -381,17 +381,23 @@ def create_brdf_datasets(group, band_name, shape, common_attrs,
                    chunks=chunks, filter_opts=filter_opts, compression=compression)
 
 
-def create_brdf_validate_datasets(group, band_name, shape, common_attrs,
+def create_brdf_validate_datasets(h5_info, group, band_name, shape, common_attrs,
                                   chunks=(1, 240, 240), filter_opts=None,
                                   compression=H5CompressionFilter.LZF):
+    
+    all_data_keys = sorted(list(h5_info.keys()))
+    doy_data_keys = sorted([key for key in h5_info if folder_doy(key) == dayofyear])
 
-    attrs = dict(scale_factor=0.001, add_offset=0,
-            _FillValue=32767, bands="iso: 1, vol: 2, geo: 3",
-                 description=('BRDF Cleaned Dataset for band {}'.format(albedo_band_name(band_name))),
-                 **common_attrs)
-    create_dataset(group, 'BRDF_Cleaned_Dataset_{}'.format(band_name),
-                   (3,) + shape, attrs,
-                   chunks=chunks, filter_opts=filter_opts, compression=compression)
+    for index, key in enumerate(all_data_keys):
+        if key not in doy_data_keys:
+            continue
+        attrs = dict(scale_factor=0.001, add_offset=0,
+                _FillValue=32767, bands="iso: 1, vol: 2, geo: 3",
+                     description=('BRDF Cleaned Dataset for band {}_{}'.format(albedo_band_name(band_name), key)),
+                     **common_attrs)
+        create_dataset(group, 'BRDF_Cleaned_Dataset_{}_{}'.format(band_name, key),
+                       (3,) + shape, attrs,
+                       chunks=chunks, filter_opts=filter_opts, compression=compression)
 
 
 
@@ -408,11 +414,11 @@ def write_chunk(data_dict, fid, band_name, window):
     data_support = np.ma.array([data_dict[key]['iso_mean'], data_dict[key]['afx'], data_dict[key]['rms']])
     data_quality = np.array([data_dict[key]['mask'], data_dict[key]['num']])
 
-    data_main = data_main * 10000
+    data_main = data_main * 1000
     data_main = data_main.filled(fill_value=32767).astype(np.int16)
     fid['BRDF_Albedo_Shape_Parameters_{}'.format(band_name)][window] = data_main
 
-    data_support = data_support * 10000
+    data_support = data_support * 1000
     data_support = data_support.filled(fill_value=32767).astype(np.int16)
     fid['BRDF_Albedo_Shape_Indices_{}'.format(band_name)][window] = data_support
 
@@ -426,15 +432,14 @@ def write_validate_chunk(data_dict, fid, band_name, window):
     and compression
     """
     # refactor?
-    assert len(data_dict) == 1
-    key = list(data_dict.keys())[0]
+    # assert len(data_dict) == 1
+    # key = list(data_dict.keys())[0]
     
-    data_support = np.ma.array([data_dict[key]['ISO'], data_dict[key]['VOL'], data_dict[key]['GEO']])
-
-    data_support = data_support * 1000
-    data_support = data_support.filled(fill_value=32767).astype(np.int16)
-    fid['BRDF_Cleaned_Dataset_{}'.format(band_name)][window] = data_support
-
+    for key in data_dict.keys(): 
+        data_support = np.ma.array([data_dict[key]['ISO'], data_dict[key]['VOL'], data_dict[key]['GEO']])
+        data_support = data_support * 1000
+        data_support = data_support.filled(fill_value=32767).astype(np.int16)
+        fid['BRDF_Cleaned_Dataset_{}_{}'.format(band_name, key)][window] = data_support
 
 
 def get_band_info(h5_info, band_name):
@@ -491,7 +496,8 @@ def write_brdf_fallback_validate_band(fid, band, h5_info, dayofyear,
 
     shape, attrs = get_band_info(h5_info, albedo_band_name(band))
     shape = shape[-2:]
-    create_brdf_validate_datasets(fid, band, shape, attrs, chunks=data_chunks)
+
+    create_brdf_validate_datasets(h5_info, fid, band, shape, attrs, chunks=data_chunks)
 
     for x, y in generate_tiles(shape[0], shape[1], compute_chunks[0], compute_chunks[1]):
         window = (slice(*y), slice(*x))
@@ -550,7 +556,7 @@ def write_brdf_validata(brdf_dir, tile, dayofyear, outdir, filter_size,
 @click.option('--filter-size', default=4)
 def main(brdf_dir, outdir, tile, dayofyear, year_from, filter_size):
     write_brdf_fallback(brdf_dir, tile, dayofyear, outdir, filter_size, year_from=year_from)
-
+    write_brdf_validate(brdf_dir, tile, dayofyear, outdir, filter_size, year_from=year_from)
 
 if __name__ == "__main__":
     main()

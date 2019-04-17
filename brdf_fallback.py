@@ -97,7 +97,7 @@ def read_brdf_dataset(ds, window=None):
     # BRDF data
     scale_factor = ds.attrs['scale_factor']
     add_offset = ds.attrs['add_offset']
-    return data * scale_factor + add_offset
+    return scale_factor * (data - add_offset)
 
 
 def get_qualityband_count(h5_info, band_name):

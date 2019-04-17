@@ -5,14 +5,14 @@ Conversion utilities for converting ECMWF
 (European Centre for Medium Weather Forecast) GRIB files to HDF5.
 """
 
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 import rasterio
 import h5py
 import pandas
 
 from wagl.hdf5.compression import H5CompressionFilter
-from wagl.hdf5 import attach_attributes, attach_image_attributes
+from wagl.hdf5 import attach_image_attributes
 from wagl.hdf5 import write_h5_image, write_dataframe
 from wagl.tiling import generate_tiles
 

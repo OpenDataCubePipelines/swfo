@@ -549,6 +549,12 @@ def apply_convolution(filename, h5_info, window, filter_size):
     return data_convolved
 
 def post_cleanup_process(args):
+    """
+    This function implements gaussian smoothing of the cleaned dataset,
+    temporal averaging of the gaussian smooth dataset,
+    quality check based on brdf_shape indices and writes the final
+    brdf averaged parameters to a h5 file.
+    """
     h5_info, outdir, tile, doy, shape, data_chunks, compute_chunks, \
     clean_data_file, attrs, filter_size, band = args
 
@@ -561,6 +567,7 @@ def post_cleanup_process(args):
             avg_data = temporal_average(data_convolved, doy)
             filtered_data = brdf_indices_quality_check(avg_data=avg_data)
             write_chunk(filtered_data, fid, band, window=(slice(None),) + window)
+
 
 @profile
 def write_brdf_fallback_band(brdf_dir, tile, band, outdir, filter_size,
@@ -588,10 +595,8 @@ def write_brdf_fallback_band(brdf_dir, tile, band, outdir, filter_size,
     thresholds = calculate_thresholds(h5_info, albedo_band_name(band), shape, compute_chunks, nprocs=nprocs)
     print('spatial stats', thresholds)
 
-    with tempfile.TemporaryDirectory() as tmpdir:
-        print(tmpdir)
-
-        clean_data_file = pjoin(outdir, 'clean_data_{}_{}.h5'.format(band, tile))
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        clean_data_file = pjoin(tmp_dir, 'clean_data_{}_{}.h5'.format(band, tile))
 
         with h5py.File(clean_data_file, 'w') as clean_data:
             for key in h5_info:
@@ -619,12 +624,12 @@ def write_brdf_fallback_band(brdf_dir, tile, band, outdir, filter_size,
 
 @click.command()
 @click.option('--brdf-dir', default='/g/data/u46/users/pd1813/BRDF_PARAM/DavidDataTest')
-@click.option('--outdir', default='/g/data/u46/users/pd1813/BRDF_PARAM/test_v3')
+@click.option('--outdir', default='/g/data/u46/users/pd1813/BRDF_PARAM/final_test/brdf_data')
 @click.option('--tile', default='h29v12')
-@click.option('--band', default='Band1')
+@click.option('--band', default='Band3')
 @click.option('--year-from', default=2002)
 @click.option('--filter-size', default=4)
-@click.option('--nprocs', default=15)
+@click.option('--nprocs', default=None)
 def main(brdf_dir, outdir, tile, band, year_from, filter_size, nprocs):
     write_brdf_fallback_band(brdf_dir, tile, band, outdir, filter_size, year_from=year_from, nprocs=nprocs)
 

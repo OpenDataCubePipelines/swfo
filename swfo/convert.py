@@ -22,6 +22,7 @@ from eodatasets.prepare import (
 from wagl.hdf5.compression import H5CompressionFilter
 
 from swfo import mcd43a1, prwtr, dsm, atsr2_aot, ozone, ecmwf
+from swfo.h5utils import write_h5_md
 
 
 VLEN_STRING = h5py.special_dtype(vlen=str)
@@ -34,14 +35,17 @@ def _compression_options(f):
     f = click.option(
         "--compression",
         type=CompressionType(),
+        envvar="SWFO_H5_COMPRESSION",
         default="LZF"
         )(f)
     f = click.option(
         "--filter-opts",
         type=JsonType(),
+        envvar="SWFO_H5_FILTER_OPTS",
         default=None
         )(f)
     return f
+
 
 def _io_dir_options(f):
     """
@@ -76,15 +80,17 @@ class CompressionType(click.ParamType):
     def get_metavar(self, param):
         return '[{}]'.format('|'.join(self.filters))
 
-    def get_missing_messge(self, param):
+    def get_missing_message(self, param):
         return 'Choose from:\n\t{}'.format(',\n\t'.join(self.filters))
 
     def convert(self, value, param, ctx):
         return H5CompressionFilter[value]
 
+
 @click.group()
 def cli():
     pass
+
 
 @cli.group(name='mcd43a1', help='Convert MCD43A1 files.')
 def mcd43a1_cli():
@@ -165,7 +171,7 @@ def mcd43a1_tile_with_md(fname, outdir, md_file, compression, filter_opts):
     if not out_fname.parent.exists():
         out_fname.parent.mkdir(parents=True)
 
-    md = modis_brdf.process_dataset(infile, md_file)
+    md = modis_brdf.process_datasets(infile, md_file)[0]
 
     mcd43a1.convert_tile(str(infile), str(out_fname), compression,
                          filter_opts)
@@ -180,14 +186,7 @@ def mcd43a1_tile_with_md(fname, outdir, md_file, compression, filter_opts):
         md['image']['bands'][band]['path'] = ''
 
     with h5py.File(str(out_fname), 'a') as fid:
-        if "/metadata" not in fid:
-            fid.create_group("/metadata")
-        dset = fid.create_dataset(
-            "/metadata/current",
-            (1,),
-            dtype=VLEN_STRING)
-
-        dset[()] = yaml.dump(md)
+        write_h5_md(fid, md)
 
 
 @mcd43a1_cli.command('vrt', help='Build VRT mosaic of each for each MCD43A1 HDF4 subdataset.')
@@ -284,26 +283,22 @@ def pr_wtr_md_cmd(fname, outdir, compression, filter_opts):
     prwtr.convert_file(str(fname), str(out_fname), compression,
                        filter_opts)
 
+    dataset_names = []
     for _md in md:
         _md['format'] = {'name': 'HDF5'}
         for band in _md['image']['bands']:
-            _md['image']['bands'][band]['layer'] = (
+            layer_name = (
                 dateutil.parser.parse(_md['extent']['center_dt'])
                 .strftime('//%Y/%B-%d/%H%M')
                 .upper()
             )
+            _md['image']['bands'][band]['layer'] = layer_name
             _md['image']['bands'][band]['path'] = ''
             del _md['image']['bands'][band]['band']
+            dataset_names.append(layer_name)
 
     with h5py.File(str(out_fname), 'a') as fid:
-        if "/metadata" not in fid:
-            fid.create_group("/metadata")
-        dset = fid.create_dataset(
-            "/metadata/current",
-            (1,),
-            dtype=VLEN_STRING)
-
-        dset[()] = yaml.dump_all(md)
+        write_h5_md(fid, md, dataset_names)
 
 
 @prwtr_cli.command('fallback', help='Create a PR_WTR vallback dataset based on averages.')

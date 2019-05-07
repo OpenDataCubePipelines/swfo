@@ -14,7 +14,7 @@ import tempfile
 import rasterio
 import h5py
 
-from wagl.hdf5 import write_h5_image, attach_image_attributes
+from wagl.hdf5 import attach_image_attributes
 from wagl.hdf5.compression import H5CompressionFilter
 from wagl.tiling import generate_tiles
 

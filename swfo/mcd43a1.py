@@ -7,7 +7,6 @@ Convert MCD43A1 HDF4 files to HDF5.
 from pathlib import Path
 from subprocess import check_call
 import tempfile
-import numpy
 import rasterio
 import h5py
 
@@ -122,7 +121,7 @@ def buildvrt(indir, outdir):
                 out_fname = outdir.joinpath(day.name, '{}.vrt'.format(base_name))
 
                 if not out_fname.parent.exists():
-                   out_fname.parent.mkdir(parents=True)
+                    out_fname.parent.mkdir(parents=True)
 
                 # buildvrt
                 cmd = [

@@ -7,10 +7,10 @@ Convert MCD43A1 HDF4 files to HDF5.
 from pathlib import Path
 from subprocess import check_call
 import tempfile
-import numpy
 import rasterio
 import h5py
 import netCDF4
+import numpy
 
 from wagl.hdf5 import write_h5_image, attach_attributes, attach_image_attributes
 from wagl.hdf5.compression import H5CompressionFilter
@@ -112,8 +112,6 @@ def buildvrt(indir, outdir):
     """
     Build VRT mosaic of each for each MCD43A1 HDF4 subdataset.
     """
-    import datetime
-    from os.path import basename
     indir = Path(indir)
     outdir = Path(outdir)
 
@@ -143,7 +141,7 @@ def buildvrt(indir, outdir):
                 out_fname = outdir.joinpath(day.name, '{}.vrt'.format(base_name))
 
                 if not out_fname.parent.exists():
-                   out_fname.parent.mkdir(parents=True)
+                    out_fname.parent.mkdir(parents=True)
 
                 # buildvrt
                 cmd = [

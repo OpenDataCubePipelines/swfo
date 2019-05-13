@@ -447,7 +447,7 @@ def temporal_average(data, doy):
     """
     tmp = {}
     for param in BrdfParameters:
-        data_param = np.ma.array([data[param][key] for key in data[param].keys() if folder_doy(key)==doy])
+        data_param = np.ma.array([data[param][key] for key in data[param].keys() if folder_doy(key) == doy])
 
         tmp[param] = dict(mean=np.ma.mean(data_param, axis=0),
                           std=np.ma.std(data_param, ddof=1, axis=0),
@@ -468,6 +468,7 @@ def apply_threshold(outfile, h5_info, band_name, window, filter_size, thresholds
 
     """
     all_data_keys = sorted(list(h5_info.keys()))
+
     def get_albedo_data(filename, window):
         with h5py.File(filename, 'r') as fid:
             return read_brdf_dataset(fid[band_name], window)
@@ -560,7 +561,7 @@ def post_cleanup_process(args):
     brdf averaged parameters to a h5 file.
     """
     h5_info, outdir, tile, doy, shape, data_chunks, compute_chunks, \
-    clean_data_file, attrs, filter_size, band = args
+        clean_data_file, attrs, filter_size, band = args
 
     outfile = pjoin(outdir, BRDF_AVG_FILE_FMT.format(tile, doy, band))
     with h5py.File(outfile, 'w') as fid:

@@ -116,7 +116,7 @@ def prwtr_average(indir, outdir, compression=H5CompressionFilter.LZF,
                 "description": description,
                 "timestamp": dtime,
                 "date_format": "2000 %B-%d/%H%M",
-                "band_name": "BAND-{}".format(band_index +1),
+                "band_name": "BAND-{}".format(band_index + 1),
                 "geotransform": geobox.transform.to_gdal(),
                 "crs_wkt": geobox.crs.ExportToWkt()
             }

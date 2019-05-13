@@ -4,7 +4,7 @@
 test function for pre_modis_brdf computations
 """
 import numpy as np
-import unittest 
+import unittest
 import pre_modis_brdf as premod
 import brdf_shape
 
@@ -13,7 +13,7 @@ def gen_test_dataset():
     data_band = {}
     data_qual = {}
 
-    keys = ["2011.01.01", "2011.01.02", "2011.01.03", "2011.01.04", "2011.01.05", "2011.01.06", "2011.01.07", 
+    keys = ["2011.01.01", "2011.01.02", "2011.01.03", "2011.01.04", "2011.01.05", "2011.01.06", "2011.01.07",
             "2011.01.08", "2011.01.09", "2011.01.10"]
     for k in keys:
         data = np.ones(shape=(3, 5, 5), dtype='float32')
@@ -21,32 +21,32 @@ def gen_test_dataset():
         data[:, :, 4] = 10
         data[:, 0, :] = np.nan
         data_band[k] = data
-        
+
         dataq = np.zeros(shape=(5, 5), dtype='float32')
         dataq[4, 4] = 1
         dataq[0, :] = np.nan
-        data_qual[k] = dataq 
+        data_qual[k] = dataq
 
-    return data_band, data_qual    
+    return data_band, data_qual
 
 
 class PreModisBrdfTest(unittest.TestCase):
     """ this class handles all testing related to computation of seasonal
         pre-MODIS BRDF averages
      """
-    def test_generate_tile_spatial_stats(self): 
+    def test_generate_tile_spatial_stats(self):
         """ test to checks if spatial statistics of an array are computed correctly """
         data_band, data_qual = gen_test_dataset()
         stats = premod.generate_tile_spatial_stats(data_band)
-        
-        for key in stats.keys(): 
+
+        for key in stats.keys():
             self.assertEqual(stats[key]['mean'][0], np.nanmean(data_band[key][0]))
             self.assertEqual(stats[key]['mean'][1], np.nanmean(data_band[key][1]))
-            self.assertEqual(stats[key]['mean'][2], np.nanmean(data_band[key][2])) 
+            self.assertEqual(stats[key]['mean'][2], np.nanmean(data_band[key][2]))
             self.assertEqual(stats[key]['std'][0], np.nanstd(data_band[key][0]))
             self.assertEqual(stats[key]['std'][1], np.nanstd(data_band[key][1]))
             self.assertEqual(stats[key]['std'][2], np.nanstd(data_band[key][2]))
- 
+
     def test_get_qualityband_count(self):
         """test to check if band quality counts are computed correctly"""
 
@@ -57,9 +57,9 @@ class PreModisBrdfTest(unittest.TestCase):
         result[4, 4] = 0.
         np.testing.assert_array_equal(num_val_pixels, result)
 
-    def test_get_threshold(self): 
+    def test_get_threshold(self):
         """test to check if threshold values are computed correctly"""
-        
+
         data_band, data_qual = gen_test_dataset()
         stats = premod.generate_tile_spatial_stats(data_band)
         threshold_iso, threshold_vol, threshold_geo = premod.get_threshold(stats)
@@ -71,9 +71,9 @@ class PreModisBrdfTest(unittest.TestCase):
         self.assertEqual(vol_threshold, threshold_vol)
         self.assertEqual(geo_threshold, threshold_geo)
 
-    def test_apply_threshold(self): 
+    def test_apply_threshold(self):
         """test to check if data with failed threshold test are filled with local median value"""
-        
+
         data_band, data_qual = gen_test_dataset()
 
         keys = [k for k in data_band.keys()]
@@ -208,7 +208,7 @@ class PreModisBrdfTest(unittest.TestCase):
         rms = np.array([1, 2, 3, 4, 5])
         afx = np.array([10, 2, 3, 4, 50])
         mask = brdf_shape.get_unfeasible_mask(rms, afx)
-        np.testing.assert_array_equal(mask, np.array([True, False, False, False,True]))
+        np.testing.assert_array_equal(mask, np.array([True, False, False, False, True]))
 
 
 if __name__ == '__main__':

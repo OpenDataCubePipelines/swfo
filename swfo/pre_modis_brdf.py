@@ -235,7 +235,7 @@ def apply_threshold(data, filter_size, spatial_stats, quality_count, min_numpix_
     """
     keys = [k for k in data.keys()]
 
-    # get threshold values 
+    # get threshold values
     iso_threshold, vol_threshold, geo_threshold = get_threshold(spatial_stats)
 
     # get the index where band_quality number is less the minimum number of valid pixels required
@@ -351,6 +351,7 @@ def temporal_average(data, h5_info=None, tile=None, tag=None):
             yearly_mean[y] = tmp
         return yearly_mean
 
+
 def brdf_indices_quality_check(avg_data=None):
     """
     This function performs the quality check on the temporal averages data.
@@ -416,8 +417,8 @@ def brdf_indices_quality_check(avg_data=None):
         # generate unfeasible afx and rms values masks from respective min and max values
         # max and min for rms and afx is generated sourced from David's brdf document
         rms_min_mask = np.ma.masked_where(rms < brdf_shape.CONSTANTS['rmsmin'], rms).mask
-        rms_max_mask = np.ma.masked_where(rms > brdf_shape.CONSTANTS['rmsmax'], rms).mask 
-        afx_min_mask = np.ma.masked_where(afx < brdf_shape.CONSTANTS['afxmin'], afx).mask 
+        rms_max_mask = np.ma.masked_where(rms > brdf_shape.CONSTANTS['rmsmax'], rms).mask
+        afx_min_mask = np.ma.masked_where(afx < brdf_shape.CONSTANTS['afxmin'], afx).mask
         afx_max_mask = np.ma.masked_where(afx > brdf_shape.CONSTANTS['afxmax'], afx).mask
         rms_mask = np.ma.mask_or(rms_min_mask, rms_max_mask)
         afx_mask = np.ma.mask_or(afx_min_mask, afx_max_mask)

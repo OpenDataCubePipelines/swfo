@@ -15,6 +15,7 @@ def _get_next_md_id(h5_group: h5py.Group, group_prefix: str) -> int:
     Returns the next incremental ID for metadata versioning
     """
     ids = [0]
+
     def _append_id(h5_key):
         ids.append(int(h5_key[1:]))
 
@@ -28,7 +29,7 @@ def _get_next_md_id(h5_group: h5py.Group, group_prefix: str) -> int:
 def write_h5_md(
         h5_group: h5py.Group,
         datasets: Union[List[Dict], Dict],
-        dataset_names: Optional[List[str]]=None) -> None:
+        dataset_names: Optional[List[str]] = None) -> None:
     """
     Serialises provided metadata information to yaml format inside hdf5
     archive.

@@ -8,9 +8,10 @@ Create timeseries averages for the NOAA water vapour data.
 import sys
 import json
 from pathlib import Path
+import fnmatch
+
 import click
 import h5py
-import yaml
 
 import dateutil.parser
 
@@ -20,8 +21,6 @@ from eodatasets.prepare import (
 )
 
 from wagl.hdf5.compression import H5CompressionFilter
-from os.path import basename
-import fnmatch
 import mcd43a1
 import prwtr
 import dsm

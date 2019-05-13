@@ -11,11 +11,10 @@ import os
 from os.path import join as pjoin
 import datetime
 
+import multiprocessing as mp
 import fnmatch
 import h5py
 import numpy as np
-import multiprocessing as mp
-import time
 import click
 
 from wagl.hdf5.compression import H5CompressionFilter
@@ -608,7 +607,7 @@ def write_brdf_fallback_band(brdf_dir, tile, band, outdir, filter_size,
                 apply_threshold(clean_data, h5_info, albedo_band_name(band), window, filter_size,
                                 thresholds, bad_indices[window])
 
-        set_doys = sorted(set([folder_doy(item) for item in h5_info.keys()]))
+        set_doys = sorted(set(folder_doy(item) for item in h5_info))
         args = []
         for doy in set_doys:
             args.append([h5_info, outdir, tile, doy, shape, data_chunks, compute_chunks, clean_data_file, attrs,

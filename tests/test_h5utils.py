@@ -31,17 +31,17 @@ def test_get_next_id(tmp_path):
     assert first_id == 1
 
     # Test first id of non-existent group
-    first_id = _get_next_md_id(h5file, '/metadata')
+    first_id = _get_next_md_id(h5file, '/METADATA')
     assert first_id == 1
 
     # Test getting next id
     h5file.create_dataset(
-        name='/metadata/_1',
+        name='/METADATA/_1',
         data=np.empty(shape=(1,))
     )
 
     h5file.visit(print)
-    second_id = _get_next_md_id(h5file, '/metadata')
+    second_id = _get_next_md_id(h5file, '/METADATA')
     assert second_id == 2
 
 
@@ -56,7 +56,7 @@ class TestH5Write:
 
         write_h5_md(h5file, datasets=sample_md)
 
-        read_dataset = h5file.get('/metadata/_1')
+        read_dataset = h5file.get('/METADATA/_1')
 
         assert read_dataset is not None
         doc = yaml.load(read_dataset[()][0])
@@ -64,7 +64,7 @@ class TestH5Write:
         del doc
         del read_dataset
 
-        read_dataset = h5file.get('/metadata/current')
+        read_dataset = h5file.get('/METADATA/CURRENT')
         assert read_dataset is not None
         doc = yaml.load(read_dataset[()][0])
 
@@ -79,12 +79,12 @@ class TestH5Write:
             {'id': 4}
         ]
 
-        dataset_names = ['two', 'three', 'four']
+        dataset_names = ['two', 'three', 'FOUR']
 
         write_h5_md(h5file, datasets=sample_md, dataset_names=dataset_names)
 
         for i in range(len(dataset_names)):
-            path = '/metadata/{}'.format(dataset_names[i])
+            path = '/METADATA/{}'.format(dataset_names[i])
 
             read_dataset = h5file.get(path + '/_1')
             assert read_dataset is not None
@@ -93,11 +93,11 @@ class TestH5Write:
 
             assert doc == sample_md[i]
 
-            assert read_dataset == h5file.get(path + '/current')
+            assert read_dataset == h5file.get(path + '/CURRENT')
 
             assert (
-                h5file['/metadata/current'].virtual_sources()[i].dset_name
-                    == path + '/current'
+                h5file['/METADATA/CURRENT'].virtual_sources()[i].dset_name
+                    == path + '/CURRENT'
             )
 
             del doc

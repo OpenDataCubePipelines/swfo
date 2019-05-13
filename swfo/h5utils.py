@@ -32,15 +32,15 @@ def write_h5_md(
     """
     Serialises provided metadata information to yaml format inside hdf5
     archive.
-    If a single dataset is provided the metadata is written to /metadata/_{index}
-    and linked to /metadata/current
+    If a single dataset is provided the metadata is written to /METADATA/_{index}
+    and linked to /METADATA/CURRENT
 
     If multiple datasets are provided and named, they are written to
-        /metadata/{dataset_name}/_{index}
+        /METADATA/{dataset_name}/_{index}
     linked to /metadata/{dataset_name}/current and consolidated in a virtual dataset
     under /metadata/current
     """
-    path_fmt = '/metadata/{}'
+    path_fmt = '/METADATA/{}'
 
     def _write_dataset(
             h5_group: h5py.Group,
@@ -56,7 +56,7 @@ def write_h5_md(
         )
         ds[()] = yaml_dumper(dataset)
 
-        current_path = path.rsplit('/', 1)[0] + '/current'
+        current_path = path.rsplit('/', 1)[0] + '/CURRENT'
         if h5_group.get(current_path):
             del h5_group[current_path]
 
@@ -86,7 +86,7 @@ def write_h5_md(
             )
             collection_layout[idx, :] = h5py.VirtualSource(current_ref)
 
-        collection_path = path_fmt.format('current')
+        collection_path = path_fmt.format('CURRENT')
         if h5_group.get(collection_path):
             del h5_group[collection_path]
 

@@ -9,6 +9,8 @@ from subprocess import check_call
 import tempfile
 import rasterio
 import h5py
+import netCDF4
+import numpy
 
 from wagl.hdf5 import write_h5_image, attach_attributes, attach_image_attributes
 from wagl.hdf5.compression import H5CompressionFilter
@@ -45,47 +47,65 @@ def convert_tile(fname, out_fname, compression, filter_opts):
     :return:
         None. Content is written directly to disk.
     """
+    # read the geo-spatial information beforehand
+    # relying on gdal to parse it
+    geospatial = {}
+    with rasterio.open(fname) as ds:
+        for sds_name in ds.subdatasets:
+            with rasterio.open(sds_name) as sds:
+                band_name = sds_name.split(':')[-1]
+                geospatial[band_name] = {
+                    'geotransform': sds.transform.to_gdal(),
+                    'crs_wkt': sds.crs.wkt
+                }
+
+    # convert data
     with h5py.File(out_fname, 'w') as fid:
-        with rasterio.open(fname) as ds:
+        with netCDF4.Dataset(fname) as ds:
+            ds.set_auto_scale(False)
+
             # global attributes
-            attach_attributes(fid, ds.tags())
+            global_attrs = {key: ds.getncattr(key) for key in ds.ncattrs()}
+            attach_attributes(fid, global_attrs)
 
             # find and convert every subsdataset (sds)
-            for sds_name in ds.subdatasets:
-                with rasterio.open(sds_name) as sds:
-                    ds_name = Path(sds_name.replace(':', '/')).name
+            for sds_name in ds.variables:
+                sds = ds.variables[sds_name]
 
-                    # create empty or copy the user supplied filter options
-                    if not filter_opts:
-                        f_opts = dict()
-                    else:
-                        f_opts = filter_opts.copy()
+                # create empty or copy the user supplied filter options
+                if not filter_opts:
+                    f_opts = dict()
+                else:
+                    f_opts = filter_opts.copy()
 
-                    # use sds native chunks if none are provided
-                    if 'chunks' not in f_opts:
-                        f_opts['chunks'] = list(sds.block_shapes[0])
+                # use sds native chunks if none are provided
+                if 'chunks' not in f_opts:
+                    f_opts['chunks'] = sds.chunking()
 
-                    # modify to have 3D chunks if we have a multiband sds
-                    if sds.count == 3:
-                        # something could go wrong if a user supplies
-                        # a 3D chunk eg (2, 256, 340)
-                        f_opts['chunks'].insert(0, 1)
-                        f_opts['chunks'] = tuple(f_opts['chunks'])
-                    else:
-                        f_opts['chunks'] = tuple(f_opts['chunks'])
+                # modify to have 3D chunks if we have a multiband sds
+                if len(sds.shape) == 3 and len(f_opts['chunks']) == 2:
+                    f_opts['chunks'].append(1)
+                    f_opts['chunks'] = tuple(f_opts['chunks'])
+                else:
+                    f_opts['chunks'] = tuple(f_opts['chunks'])
 
-                    # subdataset attributes and spatial attributes
-                    attrs = sds.tags()
-                    attrs['geotransform'] = sds.transform.to_gdal()
-                    attrs['crs_wkt'] = sds.crs.wkt
+                # subdataset attributes and spatial attributes
+                attrs = {key: sds.getncattr(key) for key in sds.ncattrs()}
+                # attrs['geotransform'] = sds.transform.to_gdal()
+                # attrs['crs_wkt'] = sds.crs.wkt
+                attrs.update(geospatial[sds_name])
 
-                    # ensure single band sds is read a 2D not 3D
-                    data = sds.read() if sds.count == 3 else sds.read(1)
+                data = sds[:]
+                if len(data.shape) == 3:
+                    # the band dimension is the last one, but we want it to be the first
+                    assert data.shape[-1] == 3
+                    data = numpy.transpose(data, (2, 0, 1))
+                    f_opts['chunks'] = (f_opts['chunks'][2], f_opts['chunks'][0], f_opts['chunks'][1])
 
-                    # write to disk as an IMAGE Class Dataset
-                    write_h5_image(data, ds_name, fid, attrs=attrs,
-                                   compression=compression,
-                                   filter_opts=f_opts)
+                # write to disk as an IMAGE Class Dataset
+                write_h5_image(data, sds_name, fid, attrs=attrs,
+                               compression=compression,
+                               filter_opts=f_opts)
 
 
 def buildvrt(indir, outdir):
@@ -159,7 +179,6 @@ def convert_vrt(fname, out_fname, dataset_name='dataset',
             else:
                 filter_opts = filter_opts.copy()
 
-
             if 'chunks' not in filter_opts:
                 filter_opts['chunks'] = chunks
 
@@ -178,6 +197,7 @@ def convert_vrt(fname, out_fname, dataset_name='dataset',
 
             attrs['geotransform'] = rds.transform.to_gdal()
             attrs['crs_wkt'] = rds.crs.wkt
+            attrs['nodata'] = rds.nodata
 
             # dataset creation options
             kwargs = compression.config(**filter_opts).dataset_compression_kwargs()

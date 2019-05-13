@@ -83,7 +83,7 @@ def convert_file(fname, out_fname, group_name='/', dataset_name='dataset',
                 attrs = attrs.copy()
             else:
                 attrs = {}
-            
+
             attrs['geotransform'] = ds.transform.to_gdal()
             attrs['crs_wkt'] = ds.crs.wkt
 
@@ -101,7 +101,6 @@ def convert_file(fname, out_fname, group_name='/', dataset_name='dataset',
                 idx = (slice(tile[0][0], tile[0][1]), slice(tile[1][0], tile[1][1]))
                 data = ds.read(1, window=tile)
                 dataset[idx] = data
-
 
 
 def jaxa_buildvrt(indir, outdir):
@@ -144,7 +143,7 @@ def jaxa_buildvrt(indir, outdir):
             for member in targz.getmembers():
                 if member.name.endswith('.tif'):
                     name = Path(member.name).name
-                    key = case[name[name.find('_') +1:name.find('.')]]
+                    key = case[name[name.find('_') + 1:name.find('.')]]
 
                     pathname = GDAL_PREFIX.format(fname.absolute().joinpath(member.name))
                     fnames[key].append(pathname)

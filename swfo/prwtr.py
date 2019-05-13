@@ -90,7 +90,6 @@ def convert_file(fname, out_fname, compression, filter_opts):
                 else:
                     f_opts = filter_opts.copy()
 
-
                 # band attributes
                 # TODO remove NETCDF tags
                 # TODO add fillvalue attr
@@ -214,7 +213,7 @@ def fallback(indir, outdir, compression=H5CompressionFilter.LZF,
                 "description": description,
                 "timestamp": dtime,
                 "date_format": "2000 %B-%d/%H%M",
-                "band_name": "BAND-{}".format(band_index +1),
+                "band_name": "BAND-{}".format(band_index + 1),
                 "geotransform": geobox.transform.to_gdal(),
                 "crs_wkt": geobox.crs.ExportToWkt()
             }

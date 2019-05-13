@@ -8,9 +8,10 @@ Create timeseries averages for the NOAA water vapour data.
 import sys
 import json
 from pathlib import Path
+import fnmatch
+
 import click
 import h5py
-import yaml
 
 import dateutil.parser
 
@@ -20,6 +21,12 @@ from eodatasets.prepare import (
 )
 
 from wagl.hdf5.compression import H5CompressionFilter
+import mcd43a1
+import prwtr
+import dsm
+import atsr2_aot
+import ozone
+import ecmwf
 
 from swfo import mcd43a1, prwtr, dsm, atsr2_aot, ozone, ecmwf
 from swfo.h5utils import write_h5_md
@@ -222,7 +229,18 @@ def mcd43a1_h5(indir, outdir, compression, filter_opts):
         }
 
         for vrt_fname in day.rglob('*.vrt'):
-            mcd43a1.convert_vrt(str(vrt_fname), out_fname,
+
+            # attributes for h5 (scale and offset has been hardcoded to the values
+            # for MCD43A1 from (https://lpdaac.usgs.gov/dataset_discovery/modis/modis_products_table/mcd43a1_v006)
+
+            if fnmatch.fnmatch(str(vrt_fname), '*Quality*'):
+                attrs['scales'] = 1
+                attrs['offsets'] = 0
+            else:
+                attrs['scales'] = 0.001
+                attrs['offsets'] = 0
+
+            mcd43a1.convert_vrt(str(vrt_fname), str(out_fname),
                                 dataset_name=vrt_fname.stem,
                                 compression=compression,
                                 filter_opts=filter_opts, attrs=attrs)

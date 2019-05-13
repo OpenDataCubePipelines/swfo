@@ -50,7 +50,7 @@ def metadata_dataframe(dataset):
         tag_data['timestamp'].append(tstamp)
 
         # description
-        tag_data['description'].append(dataset.descriptions[band -1])
+        tag_data['description'].append(dataset.descriptions[band - 1])
 
     return pandas.DataFrame(tag_data)
 

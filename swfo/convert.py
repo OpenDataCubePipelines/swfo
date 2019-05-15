@@ -16,8 +16,8 @@ import h5py
 import dateutil.parser
 
 from eodatasets.prepare import (
-    ncep_reanalysis_surface_pr_wtr as water_vapour,
-    modis_usgs_mcd43a1 as modis_brdf
+    noaa_model__prwtr_1_prepare as water_vapour,
+    nasa_teraqu_m_mcd43a1_6_prepare as modis_brdf
 )
 
 from wagl.hdf5.compression import H5CompressionFilter
@@ -329,7 +329,7 @@ def pr_wtr_md_cmd(fname, outdir, compression, filter_opts):
         write_h5_md(fid, md, dataset_names)
 
 
-@prwtr_cli.command('fallback', help='Create a PR_WTR vallback dataset based on averages.')
+@prwtr_cli.command('fallback', help='Create a PR_WTR fallback dataset based on averages.')
 @_io_dir_options
 @_compression_options
 def pr_wtr_fallback(indir, outdir, compression, filter_opts):

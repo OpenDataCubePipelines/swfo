@@ -183,14 +183,19 @@ def mcd43a1_tile_with_md(fname, outdir, md_file, compression, filter_opts):
     mcd43a1.convert_tile(str(infile), str(out_fname), compression,
                          filter_opts)
 
-    md['format'] = {'name': 'HDF5'}
+    md['properties']['odc:file_format'] = 'HDF5'
 
     # rewrite file paths:
-    for band in md['image']['bands']:
-        md['image']['bands'][band]['layer'] = '//{}'.format(
-            md['image']['bands'][band]['layer'].split(':')[-1]
+    for band in md['measurements']:
+        md['measurements'][band]['layer'] = '//{}'.format(
+            md['measurements'][band]['layer'].split(':')[-1]
         )
-        md['image']['bands'][band]['path'] = ''
+        md['measurements'][band]['path'] = ''
+
+    md['properties']['item:providers'].append({
+        'name': 'GeoscienceAustralia',
+        'roles': ['host'],
+    })
 
     with h5py.File(str(out_fname), 'a') as fid:
         write_h5_md(fid, md)
@@ -303,17 +308,22 @@ def pr_wtr_md_cmd(fname, outdir, compression, filter_opts):
 
     dataset_names = []
     for _md in md:
-        _md['format'] = {'name': 'HDF5'}
-        for band in _md['image']['bands']:
+        _md['properties']['odc:file_format'] = 'HDF5'
+        for measurement in _md['measurements']:
             layer_name = (
-                dateutil.parser.parse(_md['extent']['center_dt'])
+                dateutil.parser.parse(_md['datetime'])
                 .strftime('//%Y/%B-%d/%H%M')
                 .upper()
             )
-            _md['image']['bands'][band]['layer'] = layer_name
-            _md['image']['bands'][band]['path'] = ''
-            del _md['image']['bands'][band]['band']
+            _md['measurements'][measurement]['layer'] = layer_name
+            _md['measurements'][measurement]['path'] = ''
+            del _md['measurements'][measurement]['band']
             dataset_names.append(layer_name)
+
+        _md['properties']['item:providers'].append({
+            'name': 'GeoscienceAustralia',
+            'roles': ['host'],
+        })
 
     with h5py.File(str(out_fname), 'a') as fid:
         write_h5_md(fid, md, dataset_names)

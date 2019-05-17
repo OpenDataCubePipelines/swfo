@@ -162,8 +162,6 @@ def read_brdf_dataset(ds, window=None):
         return data
 
     # BRDF data
-    zero_val_mask = (data == 0.0)
-    data[zero_val_mask] = np.nan
     scale_factor = ds.attrs['scale_factor']
     add_offset = ds.attrs['add_offset']
     return scale_factor * (data - add_offset)
@@ -227,8 +225,11 @@ def calculate_combined_mask(afx, rms):
     # get brdf infeasible  mask
     unfeasible_mask = brdf_shape.get_unfeasible_mask(rms, afx)
 
+    # turn this mask off as per david's suggestion
     # final mask composed of all previous masks
-    return np.ma.mask_or(rms_afx_mask, unfeasible_mask, shrink=False)
+    # return np.ma.mask_or(rms_afx_mask, unfeasible_mask, shrink=False)
+
+    return rms_afx_mask
 
 
 def brdf_indices_quality_check(avg_data=None):
@@ -314,6 +315,7 @@ def get_std_block(args):
         with h5py.File(dat_filename, 'r') as fid:
             dat = read_brdf_dataset(fid[band_name], window)
             return dat
+
     data = np.array([__get_data(filename, (index,) + window) for filename in h5_info.values()])
     run_median = np.nanmedian(data, axis=0, keepdims=False)
 
@@ -449,7 +451,7 @@ def temporal_average(data, doy):
         data_param = np.ma.array([data[param][key] for key in data[param].keys() if folder_doy(key) == doy])
 
         tmp[param] = dict(mean=np.ma.mean(data_param, axis=0),
-                          std=np.ma.std(data_param, ddof=1, axis=0),
+                          std=np.ma.std(data_param, ddof=0, axis=0),
                           num=data_param.count(axis=0))
     return {doy: tmp}
 
@@ -487,8 +489,14 @@ def apply_threshold(outfile, h5_info, band_name, window, filter_size, thresholds
             # get the data iso, vol or geo from data which is a dict for all the keys and convert to numpy array
             data_param = np.ma.array([np.ma.masked_invalid(get_albedo_data(h5_info[date], (param_index,) + window))
                                       for date in all_data_keys[start_idx:end_idx]])
+
             # extract the value for a key and mask invalid data
-            clean_data = np.ma.masked_invalid(data_param[index - start_idx])
+            clean_data = data_param[index - start_idx]
+
+            # replace bad index data with nan
+            clean_data[bad_indices] = np.nan
+
+            clean_data = np.ma.masked_invalid(clean_data)
 
             # get temporal local median value as set by filter size
             local_median = np.ma.median(data_param, axis=0)
@@ -499,9 +507,6 @@ def apply_threshold(outfile, h5_info, band_name, window, filter_size, thresholds
             # replace the data which did not pass threshold test with temporal local median value
             clean_data[threshold_idx] = local_median[threshold_idx]
 
-            # replace bad index data with local median
-            clean_data[bad_indices] = local_median[bad_indices]
-
             # convert to int16
             clean_data = clean_data * 1000
             clean_data = clean_data.filled(fill_value=32767).astype(np.int16)
@@ -509,7 +514,7 @@ def apply_threshold(outfile, h5_info, band_name, window, filter_size, thresholds
             outfile[key][(param_index,) + window] = clean_data
 
 
-def apply_convolution(filename, h5_info, window, filter_size):
+def apply_convolution(filename, h5_info, window, filter_size, mask_indices):
     """
     This function applies convolution on the clean dataset from applied threshold
     method.
@@ -522,7 +527,10 @@ def apply_convolution(filename, h5_info, window, filter_size):
 
     def __get_clean_data(data_filename, data_key, data_window):
         with h5py.File(data_filename, 'r') as fid:
-            return fid[data_key][data_window]
+            d = fid[data_key][data_window]
+            d = d.astype('float32')
+            d[mask_indices] = np.nan
+            return d
 
     data_convolved = {}
 
@@ -535,14 +543,22 @@ def apply_convolution(filename, h5_info, window, filter_size):
         data_tail = np.array([data_clean[len(data_clean)-1] for i in range(filter_size)])
         # pad the data_head and tail
         data_padded = np.concatenate((data_head, data_clean, data_tail), axis=0)
+
         # mask where data are invalid
-        data_padded = np.ma.masked_where(data_padded == 32767, data_padded)
+        invalid_data = data_padded == 32767.0
+        data_padded = np.where(~invalid_data, data_padded, np.nan)
+
+        # get mean across temporal axis to fill the np.nan in data_padded array
+        median_data = np.nanmedian(data_padded, axis=0)
+        for index in range(data_padded.shape[0]):
+            data_padded[index, :, :] = np.where(invalid_data[index, :, :], median_data, data_padded[index, :, :])
+
         # convert data to floating point with hard coded scale factor of 0.001
         data_padded = data_padded * 0.001
 
         # perform convolution using Gaussian filter defined above
         data_conv = np.apply_along_axis(lambda m: np.ma.convolve(m, filt, mode='same'), axis=0, arr=data_padded)
-        data_conv = data_conv[filter_size:len(data_clean)+filter_size]
+        data_conv = np.ma.masked_invalid(data_conv[filter_size:len(data_clean)+filter_size])
 
         for index, key in enumerate(all_data_keys):
             temp[key] = data_conv[index]
@@ -560,14 +576,15 @@ def post_cleanup_process(args):
     brdf averaged parameters to a h5 file.
     """
     h5_info, outdir, tile, doy, shape, data_chunks, compute_chunks, \
-        clean_data_file, attrs, filter_size, band = args
+        clean_data_file, attrs, filter_size, band, bad_indices = args
 
     outfile = pjoin(outdir, BRDF_AVG_FILE_FMT.format(tile, doy, band))
     with h5py.File(outfile, 'w') as fid:
         create_brdf_datasets(fid, band, shape, attrs, chunks=data_chunks)
         for x, y in generate_tiles(shape[0], shape[1], compute_chunks[0], compute_chunks[1]):
             window = (slice(*y), slice(*x))
-            data_convolved = apply_convolution(clean_data_file, h5_info, window, filter_size)
+            data_convolved = apply_convolution(clean_data_file, h5_info, window, filter_size,
+                                               bad_indices[window])
             avg_data = temporal_average(data_convolved, doy)
             filtered_data = brdf_indices_quality_check(avg_data=avg_data)
             write_chunk(filtered_data, fid, band, window=(slice(None),) + window)
@@ -608,10 +625,11 @@ def write_brdf_fallback_band(brdf_dir, tile, band, outdir, filter_size,
                                 thresholds, bad_indices[window])
 
         set_doys = sorted(set(folder_doy(item) for item in h5_info))
+
         args = []
         for doy in set_doys:
             args.append([h5_info, outdir, tile, doy, shape, data_chunks, compute_chunks, clean_data_file, attrs,
-                         filter_size, band])
+                         filter_size, band, bad_indices])
         if nprocs:
             pool = mp.Pool(processes=nprocs)
             pool.map(post_cleanup_process, args)
@@ -619,15 +637,14 @@ def write_brdf_fallback_band(brdf_dir, tile, band, outdir, filter_size,
             for arg in args:
                 post_cleanup_process(arg)
 
-
 @click.command()
 @click.option('--brdf-dir', default='/g/data/u46/users/pd1813/BRDF_PARAM/DavidDataTest')
-@click.option('--outdir', default='/g/data/u46/users/pd1813/BRDF_PARAM/final_test/brdf_data')
+@click.option('--outdir', default='/g/data/u46/users/pd1813/BRDF_PARAM/test_v6')
 @click.option('--tile', default='h29v12')
-@click.option('--band', default='Band3')
+@click.option('--band', default='Band4')
 @click.option('--year-from', default=2002)
 @click.option('--filter-size', default=4)
-@click.option('--nprocs', default=None)
+@click.option('--nprocs', default=15)
 def main(brdf_dir, outdir, tile, band, year_from, filter_size, nprocs):
     write_brdf_fallback_band(brdf_dir, tile, band, outdir, filter_size, year_from=year_from, nprocs=nprocs)
 

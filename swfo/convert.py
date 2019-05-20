@@ -16,8 +16,8 @@ import h5py
 import dateutil.parser
 
 from eodatasets.prepare import (
-    noaa_model__prwtr_1_prepare as water_vapour,
-    nasa_teraqu_m_mcd43a1_6_prepare as modis_brdf
+    noaa_c_c_prwtreatm_1_prepare as water_vapour,
+    nasa_c_m_mcd43a1_6_prepare as modis_brdf
 )
 
 from wagl.hdf5.compression import H5CompressionFilter

@@ -98,7 +98,8 @@ def prwtr_average(indir, outdir, compression=H5CompressionFilter.LZF,
             # mean
             mean, geobox, chunks = calculate_average(grp_df)
 
-            # dataset name format "%B-%d/%H%M" eg FEBRUARY-06/1800 for Feb 6th 1800 hrs
+            # dataset name format "%B-%d/%H%M"
+            # eg FEBRUARY-06/1800 for Feb 6th 1800 hrs
             dname = "AVERAGE/{}".format(dtime.strftime("%B-%d/%H%M").upper())
 
             # dataset description

@@ -1,13 +1,15 @@
 from typing import Optional, List, Dict, Union
 from functools import partial
-import yaml
+from io import StringIO
 
+from ruamel.yaml import YAML
 import h5py
 
 VLEN_STRING = h5py.special_dtype(vlen=str)
 
 
-yaml_dumper = partial(yaml.dump, indent=4, default_flow_style=False)
+yaml = YAML()
+yaml.indent(mapping=2, sequence=4, offset=2)
 
 
 def _get_next_md_id(h5_group: h5py.Group, group_prefix: str) -> int:
@@ -55,7 +57,10 @@ def write_h5_md(
             dtype=VLEN_STRING,
             shape=(1,),
         )
-        ds[()] = yaml_dumper(dataset)
+
+        with StringIO() as _buf:
+            yaml.dump(dataset, _buf)
+            ds[()] = _buf.getvalue()
 
         current_path = path.rsplit('/', 1)[0] + '/CURRENT'
         if h5_group.get(current_path):

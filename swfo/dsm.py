@@ -83,7 +83,6 @@ def convert_file(fname, out_fname, group_name='/', dataset_name='dataset',
                 attrs = attrs.copy()
             else:
                 attrs = {}
-
             attrs['geotransform'] = ds.transform.to_gdal()
             attrs['crs_wkt'] = ds.crs.wkt
 

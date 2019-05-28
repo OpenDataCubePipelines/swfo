@@ -21,12 +21,6 @@ from eodatasets.prepare import (
 )
 
 from wagl.hdf5.compression import H5CompressionFilter
-import mcd43a1
-import prwtr
-import dsm
-import atsr2_aot
-import ozone
-import ecmwf
 
 from swfo import mcd43a1, prwtr, dsm, atsr2_aot, ozone, ecmwf
 from swfo.h5utils import write_h5_md
@@ -72,6 +66,9 @@ def _io_dir_options(f):
 
 
 class JsonType(click.ParamType):
+    """
+    Custom JSON type for handling interpretation from JSON
+    """
 
     name = 'json-dict'
 
@@ -80,6 +77,9 @@ class JsonType(click.ParamType):
 
 
 class CompressionType(click.ParamType):
+    """
+    Click wrapper for configuring hdf5 compression settings
+    """
 
     name = 'compression-type'
     filters = [f.name for f in list(H5CompressionFilter)]
@@ -96,37 +96,51 @@ class CompressionType(click.ParamType):
 
 @click.group()
 def cli():
-    pass
+    """
+    Command line interface parent group
+    """
 
 
 @cli.group(name='mcd43a1', help='Convert MCD43A1 files.')
 def mcd43a1_cli():
-    pass
+    """
+    MODIS MCD43A1 dataset command group
+    """
 
 
 @cli.group(name='prwtr', help='Convert water vapour filess.')
 def prwtr_cli():
-    pass
+    """
+    NOAA NCEP/NCAR Reanalysis 1 precipital water command group
+    """
 
 
 @cli.group(name='dsm', help='Convert DSM files.')
 def dsm_cli():
-    pass
+    """
+    Digital surface model command group
+    """
 
 
 @cli.group(name='aot', help='Convert Aerosol Optical Thickness files.')
 def aot_cli():
-    pass
+    """
+    Aerosol optical thickness command group
+    """
 
 
 @cli.group(name='ozone', help='Convert Ozone files.')
 def ozone_cli():
-    pass
+    """
+    Ozone command group
+    """
 
 
 @cli.group(name='ecmwf', help='Convert ECMWF GRIB files.')
 def ecmwf_cli():
-    pass
+    """
+    ECMWF command group
+    """
 
 
 @mcd43a1_cli.command('h5', help='Convert MCD43A1 HDF4 tiles to HDF5 tiles.')
@@ -162,6 +176,9 @@ def mcd43a1_tiles(indir, outdir, compression, filter_opts):
               help='Path to the hdf4 xml metadatafile to generate an ODC metadata file for')
 @_compression_options
 def mcd43a1_tile_with_md(fname, outdir, md_file, compression, filter_opts):
+    """
+    Convert MCD43A1 HDF4 tile to HDF5 tile with metadata.
+    """
     infile = Path(fname)
     if md_file:
         md_file = Path(md_file)
@@ -287,6 +304,9 @@ def pr_wtr_cmd(indir, outdir, compression, filter_opts):
               help='directory to output hdf5 file')
 @_compression_options
 def pr_wtr_md_cmd(fname, outdir, compression, filter_opts):
+    """
+    Convert PR_WTR NetCDF files into HDF5 files with metadata.
+    """
     # create empty or copy the user supplied filter options
     if not filter_opts:
         filter_opts = dict()
@@ -418,9 +438,9 @@ def jaxa_tiles(indir, outdir, compression, filter_opts):
 
 @aot_cli.command('h5', help='Converts .pix & .cmp files to a HDF5 file.')
 @click.option("--indir", type=click.Path(dir_okay=True, file_okay=False),
-              help="A readable directory to containing the original files.")
+              help="A readable directory containing the original files.")
 @click.option("--out-fname", type=click.Path(dir_okay=False, file_okay=True),
-              help="A writeable directory to contain the converted files.")
+              help="A writeable file location to contain the converted collection.")
 @_compression_options
 def atsr2_files(indir, out_fname, compression, filter_opts):
     """
@@ -430,19 +450,41 @@ def atsr2_files(indir, out_fname, compression, filter_opts):
     indir = Path(indir)
     out_fname = Path(out_fname)
 
-    # create directories as needed
-    if not out_fname.absolute().parent.exists():
-        out_fname.parent.mkdir(parents=True)
+    # Create parent directories if missing
+    out_fname.parent.mkdir(exist_ok=True, parents=True)
 
     # convert the data
     atsr2_aot.convert(indir, out_fname, compression, filter_opts)
 
 
+@aot_cli.command('h5-md', help='Converts .pix & .cmp files to a HDF5 file with metadata.')
+@click.option("--indir", type=click.Path(dir_okay=True, file_okay=False),
+              help="A readable directory containing the original files.")
+@click.option("--out-fname", type=click.Path(dir_okay=False, file_okay=True),
+              help="A writeable file location to contain the converted collection.")
+@_compression_options
+def atsr2_files_md(indir, out_fname, compression, filter_opts):
+    """
+    Converts .pix & .cmp files to a HDF5 file with metadata.
+    """
+    # convert to Path objects
+    indir = Path(indir)
+    out_fname = Path(out_fname)
+
+    # Create parent directories if missing
+    out_fname.parent.mkdir(exist_ok=True, parents=True)
+
+    md, dataset_names = atsr2_aot.convert(indir, out_fname, compression, filter_opts)
+
+    with h5py.File(str(out_fname), 'a') as fid:
+        write_h5_md(fid, md, dataset_names)
+
+
 @ozone_cli.command('h5', help='Converts ozone .tif files to a HDF5 file.')
 @click.option("--indir", type=click.Path(dir_okay=True, file_okay=False),
-              help="A readable directory to containing the original files.")
+              help="A readable directory containing the original files.")
 @click.option("--out-fname", type=click.Path(dir_okay=False, file_okay=True),
-              help="A writeable directory to contain the converted files.")
+              help="A writeable file location to contain the converted files.")
 @_compression_options
 def ozone_files(indir, out_fname, compression, filter_opts):
     """
@@ -453,11 +495,33 @@ def ozone_files(indir, out_fname, compression, filter_opts):
     out_fname = Path(out_fname)
 
     # create directories as needed
-    if not out_fname.absolute().parent.exists():
-        out_fname.parent.mkdir(parents=True)
+    out_fname.parent.mkdir(parents=True, exist_ok=True)
 
     # convert the data
     ozone.convert(indir, out_fname, compression, filter_opts)
+
+
+@ozone_cli.command('h5-md', help='Converts ozone .tif directory to a HDF5 collection with metadata.')
+@click.option("--indir", type=click.Path(dir_okay=True, file_okay=False),
+              help="A readable directory containing the original files.")
+@click.option("--out-fname", type=click.Path(dir_okay=False, file_okay=True),
+              help="A writeable file location to contain the converted collection.")
+@_compression_options
+def ozone_files_md(indir, out_fname, compression, filter_opts):
+    """
+    Converts ozone .tif files to a HDF5 file with associated metadata.
+    """
+    # convert to Path objects
+    indir = Path(indir)
+    out_fname = Path(out_fname)
+
+    # create directories as needed
+    out_fname.parent.mkdir(parents=True, exist_ok=True)
+
+    md, dataset_names = ozone.convert(indir, out_fname, compression, filter_opts)
+
+    with h5py.File(str(out_fname), 'a') as fid:
+        write_h5_md(fid, md, dataset_names)
 
 
 @ecmwf_cli.command('h5', help='Convert ECMWF GRIB files into a HDF5 files.')

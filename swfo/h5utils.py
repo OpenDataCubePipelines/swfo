@@ -1,15 +1,21 @@
+"""
+Utility functions used in the conversion process to hdf5 archives
+"""
+
 from typing import Optional, List, Dict, Union
-from functools import partial
-from io import StringIO
+from io import StringIO, BufferedReader
+import uuid
+import urllib.parse
+import hashlib
 
 from ruamel.yaml import YAML
 import h5py
 
 VLEN_STRING = h5py.special_dtype(vlen=str)
+FALLBACK_UUID_NAMESPACE = uuid.UUID('c5908e58-7301-4054-9f04-a0fa8cdef63b')
 
-
-yaml = YAML()
-yaml.indent(mapping=2, sequence=4, offset=2)
+YAML_SERIALISER = YAML()
+YAML_SERIALISER.indent(mapping=2, sequence=4, offset=2)
 
 
 def _get_next_md_id(h5_group: h5py.Group, group_prefix: str) -> int:
@@ -40,8 +46,8 @@ def write_h5_md(
 
     If multiple datasets are provided and named, they are written to
         /METADATA/{dataset_name}/_{index}
-    linked to /metadata/{dataset_name}/current and consolidated in a virtual dataset
-    under /metadata/current
+    linked to /METADATA/{dataset_name}/CURRENT and
+    consolidated in a virtual dataset under /METADATA/CURRENT
     """
     path_fmt = '/METADATA/{}'
 
@@ -59,7 +65,7 @@ def write_h5_md(
         )
 
         with StringIO() as _buf:
-            yaml.dump(dataset, _buf)
+            YAML_SERIALISER.dump(dataset, _buf)
             ds[()] = _buf.getvalue()
 
         current_path = path.rsplit('/', 1)[0] + '/CURRENT'
@@ -97,3 +103,27 @@ def write_h5_md(
             del h5_group[collection_path]
 
         h5_group.create_virtual_dataset(collection_path, collection_layout)
+
+
+def generate_fallback_uuid(
+        product_href: str, uuid_namespace: uuid.UUID = FALLBACK_UUID_NAMESPACE,
+        **product_params):
+    """
+    Generates a fallback UUID from the fallback UUID namespace
+    """
+    return uuid.uuid5(
+        uuid_namespace,
+        "{}?{}".format(product_href, urllib.parse.urlencode(product_params))
+    )
+
+
+def generate_md5sum(src: BufferedReader, chunk_size=16384):
+    """
+    Generate a md5sum for the src component.
+    Used to help generate fallback uuids
+    """
+    md5_hash = hashlib.md5()
+    for chunk in iter(lambda: src.read(chunk_size), b''):
+        md5_hash.update(chunk)
+
+    return md5_hash

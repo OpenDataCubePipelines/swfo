@@ -13,6 +13,7 @@ setup(name='swfo',
       install_requires=[
           'click',
           'GDAL',
+          'netCDF4',
           'h5py',
           'numpy',
           'pandas',

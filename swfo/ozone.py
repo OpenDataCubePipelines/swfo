@@ -10,6 +10,13 @@ import rasterio
 
 from wagl.hdf5 import write_h5_image
 
+from .h5utils import (
+    generate_fallback_uuid, generate_md5sum
+)
+
+
+PRODUCT_HREF = 'https://collections.dea.ga.gov.au/ga_c_c_ozone_1'
+
 
 def convert(indir, out_fname, compression, filter_opts):
     """
@@ -19,6 +26,8 @@ def convert(indir, out_fname, compression, filter_opts):
     """
     # convert to Path object
     indir = Path(indir)
+    dataset_names = []
+    metadata = []
 
     # create empty or copy the user supplied filter options
     if not filter_opts:
@@ -43,3 +52,18 @@ def convert(indir, out_fname, compression, filter_opts):
                 dname = fname.stem
                 write_h5_image(rds.read(1), dname, fid, compression, attrs,
                                filter_opts)
+
+                # src checksum; used to help derive fallback uuid
+                with fname.open('rb') as src:
+                    src_checksum = generate_md5sum(src).hexdigest()
+
+                dataset_names.append(dname)
+                metadata.append({
+                    'id': str(generate_fallback_uuid(
+                        PRODUCT_HREF,
+                        path=str(dname),
+                        md5=src_checksum
+                    ))
+                })
+
+    return metadata, dataset_names

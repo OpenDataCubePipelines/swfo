@@ -77,15 +77,15 @@ def _atomic_h5_write(fname: Path, mode='r'):
         dir=fname.parent,
         prefix='.tmp',
         suffix='.h5')
+    fp = Path(tpath)
     try:
         with h5py.File(tpath, mode=mode) as h5_ref:
             yield h5_ref
-        fp = Path(tpath)
         fp.rename(fname)
+        fp = None
     finally:
         os.close(os_fid)
-        fp = Path(tpath)
-        if fp.exists():
+        if fp and fp.exists():
             fp.unlink()
 
 

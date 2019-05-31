@@ -20,7 +20,7 @@ import click
 from wagl.hdf5.compression import H5CompressionFilter
 from wagl.hdf5 import attach_image_attributes
 from wagl.tiling import generate_tiles
-from wagl.constants import BrdfParameters
+from wagl.constants import BrdfModelParameters
 from memory_profiler import profile
 
 import brdf_shape
@@ -83,7 +83,7 @@ def folder_year(folder):
     return folder_datetime(folder).timetuple().tm_year
 
 
-def gauss_filt(filter_size):
+def gauss_filter(filter_size):
     """
     A Guassian filter where the weights are a normal exponential but value 1 at centre.
     Filter_rad is half the total filter length. The value of the normal distribution at
@@ -222,13 +222,6 @@ def calculate_combined_mask(afx, rms):
     afx_mask = np.ma.mask_or(afx_min_mask, afx_max_mask, shrink=False)
     rms_afx_mask = np.ma.mask_or(rms_mask, afx_mask, shrink=False)
 
-    # get brdf infeasible  mask
-    unfeasible_mask = brdf_shape.get_unfeasible_mask(rms, afx)
-
-    # turn this mask off as per david's suggestion
-    # final mask composed of all previous masks
-    # return np.ma.mask_or(rms_afx_mask, unfeasible_mask, shrink=False)
-
     return rms_afx_mask
 
 
@@ -259,17 +252,17 @@ def brdf_indices_quality_check(avg_data=None):
     filtered_data = {}
     for key in avg_data.keys():
         # set the mean brdf data from the avg_data dict for each keys
-        iso_mean = avg_data[key][BrdfParameters.ISO]['mean']
-        vol_mean = avg_data[key][BrdfParameters.VOL]['mean']
-        geo_mean = avg_data[key][BrdfParameters.GEO]['mean']
+        iso_mean = avg_data[key][BrdfModelParameters.ISO]['mean']
+        vol_mean = avg_data[key][BrdfModelParameters.VOL]['mean']
+        geo_mean = avg_data[key][BrdfModelParameters.GEO]['mean']
 
         # generate new mask where all the iso, vol and geo brdf parameters are valid
         mask_param = np.ma.mask_or(np.ma.mask_or(iso_mean.mask, vol_mean.mask, shrink=False),
                                    geo_mean.mask, shrink=False)
 
-        min_num = np.min(np.array([avg_data[key][BrdfParameters.ISO]['num'],
-                                   avg_data[key][BrdfParameters.VOL]['num'],
-                                   avg_data[key][BrdfParameters.GEO]['num']]), axis=0)
+        min_num = np.min(np.array([avg_data[key][BrdfModelParameters.ISO]['num'],
+                                   avg_data[key][BrdfModelParameters.VOL]['num'],
+                                   avg_data[key][BrdfModelParameters.GEO]['num']]), axis=0)
 
         # mask the brdf param with new mask that is generated from union of masks from
         # individual brdf parameters (iso, vol, and geo)
@@ -277,7 +270,7 @@ def brdf_indices_quality_check(avg_data=None):
         vol_mean = np.ma.masked_array(vol_mean, mask=mask_param)
         geo_mean = np.ma.masked_array(geo_mean, mask=mask_param)
 
-        iso_std = np.ma.masked_array(avg_data[key][BrdfParameters.ISO]['std'], mask=mask_param)
+        iso_std = np.ma.masked_array(avg_data[key][BrdfModelParameters.ISO]['std'], mask=mask_param)
 
         # set coefficients of variation
         cov_iso = iso_std / iso_mean
@@ -292,9 +285,9 @@ def brdf_indices_quality_check(avg_data=None):
         combined_mask = calculate_combined_mask(afx, rms)
 
         temp = {}
-        temp['iso_mean'] = np.ma.masked_array(iso_mean, mask=combined_mask)
-        temp['alpha1'] = np.ma.masked_array(alpha1, mask=combined_mask)
-        temp['alpha2'] = np.ma.masked_array(alpha2, mask=combined_mask)
+        temp[BrdfModelParameters.ISO.value] = np.ma.masked_array(iso_mean, mask=combined_mask)
+        temp[BrdfModelParameters.VOL.value] = np.ma.masked_array(alpha1 * iso_mean, mask=combined_mask)
+        temp[BrdfModelParameters.GEO.value] = np.ma.masked_array(alpha2 * iso_mean, mask=combined_mask)
         temp['afx'] = np.ma.masked_array(afx, mask=combined_mask)
         temp['rms'] = np.ma.masked_array(rms, mask=combined_mask)
         temp['mask'] = np.array(combined_mask)
@@ -333,7 +326,7 @@ def calculate_thresholds(h5_info, band_name, shape, compute_chunks, nprocs=None)
     Computes threshold needed needed to clean temporal series
     """
     thresh_dict = {}
-    for index, param in enumerate(BrdfParameters):
+    for index, param in enumerate(BrdfModelParameters):
         args = []
         for x, y in generate_tiles(shape[0], shape[1], compute_chunks[0], compute_chunks[1]):
             window = (slice(*y), slice(*x))
@@ -374,26 +367,28 @@ def create_brdf_datasets(group, band_name, shape, common_attrs,
                          compression=H5CompressionFilter.LZF):
 
     attrs = dict(scale_factor=0.0001, add_offset=0,
-                 _FillValue=32767, bands="alpha1: 1, alpha2: 2",
-                 description=('BRDF albedo shape parameters (alpha1 and alpha2)'
-                              'derived from {}'
-                              'in lognormal space'.format(albedo_band_name(band_name))),
+                 _FillValue=32767, bands="{}: 1, {}: 2:, {}: 3".format(BrdfModelParameters.ISO.value,
+                                                                       BrdfModelParameters.VOL.value,
+                                                                       BrdfModelParameters.GEO.value),
+                 description=('BRDF albedo parameters (iso, vol and geo)'
+                              ' derived from {}'
+                              ' in lognormal space'.format(albedo_band_name(band_name))),
                  **common_attrs)
-    create_dataset(group, 'BRDF_Albedo_Shape_Parameters_{}'.format(band_name),
-                   (2,) + shape, attrs,
-                   chunks=chunks, filter_opts=filter_opts, compression=compression)
-
-    attrs = dict(scale_factor=0.0001, add_offset=0,
-                 _FillValue=32767, bands="iso_mean: 1, afx: 2, rms: 3",
-                 description=('BRDF Albedo ISO parameter and statistics (rms and afx)'
-                              'generated to support future validation work'),
-                 **common_attrs)
-    create_dataset(group, 'BRDF_Albedo_Shape_Indices_{}'.format(band_name),
+    create_dataset(group, 'BRDF_Albedo_Parameters_{}'.format(band_name),
                    (3,) + shape, attrs,
                    chunks=chunks, filter_opts=filter_opts, compression=compression)
 
+    attrs = dict(scale_factor=0.0001, add_offset=0,
+                 _FillValue=32767, bands="afx: 1, rms: 2",
+                 description=('BRDF shape indices (afx and rms)'
+                              ' generated to support future validation work'),
+                 **common_attrs)
+    create_dataset(group, 'BRDF_Albedo_Shape_Indices_{}'.format(band_name),
+                   (2,) + shape, attrs,
+                   chunks=chunks, filter_opts=filter_opts, compression=compression)
+
     attrs = dict(description=('Mask and number of valid data used'
-                              'in generating BRDF Albedo shape parameters'),
+                              ' in generating BRDF Albedo shape parameters'),
                  bands="mask: 1, num: 2",
                  **common_attrs)
     create_dataset(group, 'BRDF_Albedo_Shape_Parameters_Quality_{}'.format(band_name),
@@ -410,14 +405,17 @@ def write_chunk(data_dict, fid, band_name, window):
     assert len(data_dict) == 1
     key = list(data_dict.keys())[0]
 
-    data_main = np.ma.array([data_dict[key]['alpha1'], data_dict[key]['alpha2']])
-    data_support = np.ma.array([data_dict[key]['iso_mean'], data_dict[key]['afx'], data_dict[key]['rms']])
+    data_main = np.ma.array([data_dict[key][BrdfModelParameters.ISO.value],
+                             data_dict[key][BrdfModelParameters.VOL.value],
+                             data_dict[key][BrdfModelParameters.GEO.value]])
+
+    data_support = np.ma.array([data_dict[key]['afx'], data_dict[key]['rms']])
     data_quality = np.array([data_dict[key]['mask'], data_dict[key]['num']])
 
     data_main = data_main * 10000
     data_main = np.rint(data_main).filled(fill_value=32767).astype(np.int16)
 
-    fid['BRDF_Albedo_Shape_Parameters_{}'.format(band_name)][window] = data_main
+    fid['BRDF_Albedo_Parameters_{}'.format(band_name)][window] = data_main
 
     data_support = data_support * 10000
     data_support = np.rint(data_support).filled(fill_value=32767).astype(np.int16)
@@ -447,7 +445,7 @@ def temporal_average(data, doy):
 
     """
     tmp = {}
-    for param in BrdfParameters:
+    for param in BrdfModelParameters:
         data_param = np.ma.array([data[param][key] for key in data[param].keys() if folder_doy(key) == doy])
 
         tmp[param] = dict(mean=np.ma.mean(data_param, axis=0),
@@ -484,7 +482,7 @@ def apply_threshold(outfile, h5_info, band_name, window, filter_size, thresholds
         if end_idx > len(all_data_keys) - 1:
             end_idx = len(all_data_keys)
 
-        for param_index, param in enumerate(BrdfParameters):
+        for param_index, param in enumerate(BrdfModelParameters):
 
             # get the data iso, vol or geo from data which is a dict for all the keys and convert to numpy array
             data_param = np.ma.array([np.ma.masked_invalid(get_albedo_data(h5_info[date], (param_index,) + window))
@@ -514,6 +512,7 @@ def apply_threshold(outfile, h5_info, band_name, window, filter_size, thresholds
             outfile[key][(param_index,) + window] = clean_data
 
 
+@profile
 def apply_convolution(filename, h5_info, window, filter_size, mask_indices):
     """
     This function applies convolution on the clean dataset from applied threshold
@@ -522,7 +521,7 @@ def apply_convolution(filename, h5_info, window, filter_size, mask_indices):
     all_data_keys = sorted(list(h5_info.keys()))
 
     # define a filter to be used in convolution and normalize to sum 1.0
-    filt = gauss_filt(filter_size)
+    filt = gauss_filter(filter_size)
     filt = filt / np.sum(filt)
 
     def __get_clean_data(data_filename, data_key, data_window):
@@ -534,13 +533,16 @@ def apply_convolution(filename, h5_info, window, filter_size, mask_indices):
 
     data_convolved = {}
 
-    for param_index, param in enumerate(BrdfParameters):
+    for param_index, param in enumerate(BrdfModelParameters):
         temp = {}
+
         # get clean dataset for all available dates for given window
         data_clean = np.array([__get_clean_data(filename, key, (param_index,) + window) for key in all_data_keys])
+
         # set data that needs to be padded at the end and front to perform convolution
         data_head = np.array([data_clean[0] for i in range(filter_size)])
         data_tail = np.array([data_clean[len(data_clean)-1] for i in range(filter_size)])
+
         # pad the data_head and tail
         data_padded = np.concatenate((data_head, data_clean, data_tail), axis=0)
 
@@ -568,6 +570,7 @@ def apply_convolution(filename, h5_info, window, filter_size, mask_indices):
     return data_convolved
 
 
+@profile
 def post_cleanup_process(args):
     """
     This function implements gaussian smoothing of the cleaned dataset,
@@ -576,11 +579,13 @@ def post_cleanup_process(args):
     brdf averaged parameters to a h5 file.
     """
     h5_info, outdir, tile, doy, shape, data_chunks, compute_chunks, \
-        clean_data_file, attrs, filter_size, band, bad_indices = args
+        clean_data_file, attrs, filter_size, band, bad_indices, compression = args
 
+    average_metadata = {key: h5_info[key] for key in h5_info.keys() if folder_doy(key) == doy}
+   
     outfile = pjoin(outdir, BRDF_AVG_FILE_FMT.format(tile, doy, band))
     with h5py.File(outfile, 'w') as fid:
-        create_brdf_datasets(fid, band, shape, attrs, chunks=data_chunks)
+        create_brdf_datasets(fid, band, shape, attrs, chunks=data_chunks, compression=compression)
         for x, y in generate_tiles(shape[0], shape[1], compute_chunks[0], compute_chunks[1]):
             window = (slice(*y), slice(*x))
             data_convolved = apply_convolution(clean_data_file, h5_info, window, filter_size,
@@ -593,10 +598,10 @@ def post_cleanup_process(args):
 @profile
 def write_brdf_fallback_band(brdf_dir, tile, band, outdir, filter_size,
                              pthresh=10.0, year_from=None, data_chunks=(1, 240, 240),
-                             compute_chunks=(240, 240), nprocs=None):
+                             compute_chunks=(240, 240), nprocs=None, compression=H5CompressionFilter.LZF):
 
     h5_info = hdf5_files(brdf_dir, tile=tile, year_from=year_from)
-
+    
     min_numpix_required = np.rint((pthresh / 100.0) * len(h5_info))
 
     # get counts of good pixel quality
@@ -612,8 +617,8 @@ def write_brdf_fallback_band(brdf_dir, tile, band, outdir, filter_size,
     thresholds = calculate_thresholds(h5_info, albedo_band_name(band), shape, compute_chunks, nprocs=nprocs)
 
     with tempfile.TemporaryDirectory() as tmp_dir:
-        clean_data_file = pjoin(tmp_dir, 'clean_data_{}_{}.h5'.format(band, tile))
-
+        clean_data_file = pjoin(outdir, 'clean_data_{}_{}.h5'.format(band, tile))
+        
         with h5py.File(clean_data_file, 'w') as clean_data:
             for key in h5_info:
                 create_dataset(clean_data, key, (3, shape[0], shape[1]), {})
@@ -623,13 +628,14 @@ def write_brdf_fallback_band(brdf_dir, tile, band, outdir, filter_size,
 
                 apply_threshold(clean_data, h5_info, albedo_band_name(band), window, filter_size,
                                 thresholds, bad_indices[window])
+       
 
         set_doys = sorted(set(folder_doy(item) for item in h5_info))
-
         args = []
+     
         for doy in set_doys:
             args.append([h5_info, outdir, tile, doy, shape, data_chunks, compute_chunks, clean_data_file, attrs,
-                         filter_size, band, bad_indices])
+                         filter_size, band, bad_indices, compression])
         if nprocs:
             pool = mp.Pool(processes=nprocs)
             pool.map(post_cleanup_process, args)
@@ -637,16 +643,19 @@ def write_brdf_fallback_band(brdf_dir, tile, band, outdir, filter_size,
             for arg in args:
                 post_cleanup_process(arg)
 
+
 @click.command()
-@click.option('--brdf-dir', default='/g/data/u46/users/pd1813/BRDF_PARAM/DavidDataTest')
-@click.option('--outdir', default='/g/data/u46/users/pd1813/BRDF_PARAM/test_v6')
+@click.option('--brdf-dir', default='/g/data/v10/eoancillarydata.reS/fetch/BRDF/MCD43A1.006/')
+@click.option('--outdir', default='/g/data/u46/users/pd1813/BRDF_PARAM/test_v9')
 @click.option('--tile', default='h29v12')
-@click.option('--band', default='Band4')
+@click.option('--band', default='Band1')
 @click.option('--year-from', default=2002)
-@click.option('--filter-size', default=4)
+@click.option('--filter-size', default=22)
 @click.option('--nprocs', default=15)
-def main(brdf_dir, outdir, tile, band, year_from, filter_size, nprocs):
-    write_brdf_fallback_band(brdf_dir, tile, band, outdir, filter_size, year_from=year_from, nprocs=nprocs)
+@click.option('--compression', default=H5CompressionFilter.LZF)
+def main(brdf_dir, outdir, tile, band, year_from, filter_size, nprocs, compression):
+    write_brdf_fallback_band(brdf_dir, tile, band, outdir, filter_size, year_from=year_from, nprocs=nprocs,
+                             compression=compression)
 
 
 if __name__ == "__main__":

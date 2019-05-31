@@ -582,7 +582,11 @@ def post_cleanup_process(args):
         clean_data_file, attrs, filter_size, band, bad_indices, compression = args
 
     average_metadata = {key: h5_info[key] for key in h5_info.keys() if folder_doy(key) == doy}
-   
+    
+    # TODO create dataset to store uuid for brdf_fallback provenance (use h5_info for threhold generation 
+    # and average_metadata for average brdf parameters generation. h5_info and average_metadata are 
+    # dictionary(eg : key = '2002.01.01', value = 'absolute path to a h5 file' 
+
     outfile = pjoin(outdir, BRDF_AVG_FILE_FMT.format(tile, doy, band))
     with h5py.File(outfile, 'w') as fid:
         create_brdf_datasets(fid, band, shape, attrs, chunks=data_chunks, compression=compression)

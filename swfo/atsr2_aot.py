@@ -71,7 +71,7 @@ def read_pix(filename: Path):
     return df, extents
 
 
-def read_cmp(filename):
+def read_cmp(filename: Path):
     """
     The cmp data is a 2D grid, but the pixel sizes are
     not constant (according to the lon and lat arrays.
@@ -108,7 +108,7 @@ def read_cmp(filename):
     return df, extents
 
 
-def convert(aerosol_path, output_filename, compression, filter_opts):
+def convert(aerosol_path, out_h5: h5py.Group, compression, filter_opts):
     """
     Converts all the .pix and .cmp files found in `aerosol_path`
     to a HDF5 file.
@@ -118,35 +118,33 @@ def convert(aerosol_path, output_filename, compression, filter_opts):
     dataset_names = []
     metadata = []
 
-    # create the output file
-    with h5py.File(str(output_filename), 'w') as fid:
 
-        pattern = ['*.pix', '*.cmp']
-        for p in pattern:
-            for search_path in aerosol_path.glob(p):
-                _path = search_path.resolve()
-                fname, ext = _path.stem, _path.suffix[1:]  # exclude the period from ext
-                out_path = ppjoin(ext, fname)
-                df, extents = func[ext](_path)
+    pattern = ['*.pix', '*.cmp']
+    for p in pattern:
+        for search_path in aerosol_path.glob(p):
+            _path = search_path.resolve()
+            fname, ext = _path.stem, _path.suffix[1:]  # exclude the period from ext
+            out_path = ppjoin(ext, fname)
+            df, extents = func[ext](_path)
 
-                # read/write
-                df, extents = func[ext](_path)
+            # read/write
+            df, extents = func[ext](_path)
 
-                # src checksum; used to help derive fallback uuid
-                with _path.open('rb') as src:
-                    src_checksum = generate_md5sum(src).hexdigest()
+            # src checksum; used to help derive fallback uuid
+            with _path.open('rb') as src:
+                src_checksum = generate_md5sum(src).hexdigest()
 
-                attrs = {'extents': wkt.dumps(extents),
-                         'source filename': str(_path)}
-                write_dataframe(df, out_path, fid, compression=compression,
-                                attrs=attrs, filter_opts=filter_opts)
-                dataset_names.append(out_path)
-                metadata.append({
-                    'id': str(generate_fallback_uuid(
-                        PRODUCT_HREF,
-                        path=str(_path.stem),
-                        md5=src_checksum)
-                             )
-                })
+            attrs = {'extents': wkt.dumps(extents),
+                     'source filename': str(_path)}
+            write_dataframe(df, out_path, out_h5, compression=compression,
+                            attrs=attrs, filter_opts=filter_opts)
+            dataset_names.append(out_path)
+            metadata.append({
+                'id': str(generate_fallback_uuid(
+                    PRODUCT_HREF,
+                    path=str(_path.stem),
+                    md5=src_checksum)
+                         )
+            })
 
     return metadata, dataset_names

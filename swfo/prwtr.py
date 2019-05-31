@@ -23,7 +23,7 @@ CRS = osr.SpatialReference()
 CRS.ImportFromEPSG(4326)
 
 
-def convert_file(fname, out_fname, compression, filter_opts):
+def convert_file(fname, out_h5: h5py.Group, compression, filter_opts):
     """
     Convert a PR_WTR NetCDF file into HDF5.
 
@@ -31,7 +31,7 @@ def convert_file(fname, out_fname, compression, filter_opts):
         A str containing the PR_WTR filename.
 
     :param out_fname:
-        A str containing the output filename for the HDF5 file.
+        A h5py.Group to write output datasets to
 
     :param compression:
         The compression filter to use.
@@ -48,68 +48,67 @@ def convert_file(fname, out_fname, compression, filter_opts):
     :return:
         None. Content is written directly to disk.
     """
-    with h5py.File(out_fname, 'w') as fid:
-        with rasterio.open(fname) as ds:
-            name_fmt = 'BAND-{}'
+    with rasterio.open(fname) as ds:
+        name_fmt = 'BAND-{}'
 
-            # global attributes
-            # TODO update the history attrs
-            # TODO remove the NC_GLOBAL str and just have plain attr names
-            g_attrs = ds.tags()
+        # global attributes
+        # TODO update the history attrs
+        # TODO remove the NC_GLOBAL str and just have plain attr names
+        g_attrs = ds.tags()
 
-            # get timestamp info
-            origin = g_attrs.pop('time#units').replace('hours since ', '')
-            hours = json.loads(
-                g_attrs.pop('NETCDF_DIM_time_VALUES').replace('{', '[').replace('}', ']')
-            )
-            df = pandas.DataFrame(
-                {
-                    'timestamp': pandas.to_datetime(hours, unit='h', origin=origin),
-                    'band_name': [name_fmt.format(i+1) for i in range(ds.count)]
-                }
-            )
-            df['dataset_name'] = df.timestamp.dt.strftime('%Y/%B-%d/%H%M')
-            df['dataset_name'] = df['dataset_name'].str.upper()
-
-            # create a timestamp and band name index table dataset
-            desc = "Timestamp and Band Name index information."
-            attrs = {
-                'description': desc
+        # get timestamp info
+        origin = g_attrs.pop('time#units').replace('hours since ', '')
+        hours = json.loads(
+            g_attrs.pop('NETCDF_DIM_time_VALUES').replace('{', '[').replace('}', ']')
+        )
+        df = pandas.DataFrame(
+            {
+                'timestamp': pandas.to_datetime(hours, unit='h', origin=origin),
+                'band_name': [name_fmt.format(i+1) for i in range(ds.count)]
             }
-            write_dataframe(df, 'INDEX', fid, compression, attrs=attrs)
+        )
+        df['dataset_name'] = df.timestamp.dt.strftime('%Y/%B-%d/%H%M')
+        df['dataset_name'] = df['dataset_name'].str.upper()
 
-            attach_attributes(fid, g_attrs)
+        # create a timestamp and band name index table dataset
+        desc = "Timestamp and Band Name index information."
+        attrs = {
+            'description': desc
+        }
+        write_dataframe(df, 'INDEX', out_h5, compression, attrs=attrs)
 
-            # process every band
-            for i in range(1, ds.count + 1):
-                ds_name = df.iloc[i-1].dataset_name
+        attach_attributes(out_h5, g_attrs)
 
-                # create empty or copy the user supplied filter options
-                if not filter_opts:
-                    f_opts = dict()
-                else:
-                    f_opts = filter_opts.copy()
+        # process every band
+        for i in range(1, ds.count + 1):
+            ds_name = df.iloc[i-1].dataset_name
 
-                # band attributes
-                # TODO remove NETCDF tags
-                # TODO add fillvalue attr
-                attrs = ds.tags(i)
-                attrs['timestamp'] = df.iloc[i-1]['timestamp']
-                attrs['band_name'] = df.iloc[i-1]['band_name']
-                attrs['geotransform'] = ds.transform.to_gdal()
-                attrs['crs_wkt'] = CRS.ExportToWkt()
+            # create empty or copy the user supplied filter options
+            if not filter_opts:
+                f_opts = dict()
+            else:
+                f_opts = filter_opts.copy()
 
-                # use ds native chunks if none are provided
-                if 'chunks' not in f_opts:
-                    try:
-                        f_opts['chunks'] = ds.block_shapes[i]
-                    except IndexError:
-                        print("Chunk error: {}".format(fname))
-                        f_opts['chunks'] = (73, 144)
+            # band attributes
+            # TODO remove NETCDF tags
+            # TODO add fillvalue attr
+            attrs = ds.tags(i)
+            attrs['timestamp'] = df.iloc[i-1]['timestamp']
+            attrs['band_name'] = df.iloc[i-1]['band_name']
+            attrs['geotransform'] = ds.transform.to_gdal()
+            attrs['crs_wkt'] = CRS.ExportToWkt()
 
-                # write to disk as an IMAGE Class Dataset
-                write_h5_image(ds.read(i), ds_name, fid, attrs=attrs,
-                               compression=compression, filter_opts=f_opts)
+            # use ds native chunks if none are provided
+            if 'chunks' not in f_opts:
+                try:
+                    f_opts['chunks'] = ds.block_shapes[i]
+                except IndexError:
+                    print("Chunk error: {}".format(fname))
+                    f_opts['chunks'] = (73, 144)
+
+            # write to disk as an IMAGE Class Dataset
+            write_h5_image(ds.read(i), ds_name, out_h5, attrs=attrs,
+                           compression=compression, filter_opts=f_opts)
 
 
 def _build_index(indir):

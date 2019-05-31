@@ -23,7 +23,7 @@ RASTERIO_PREFIX = 'tar:{}!/{}'
 GDAL_PREFIX = '/vsitar/{}'
 
 
-def convert_file(fname, out_fname, group_name='/', dataset_name='dataset',
+def convert_file(fname, out_h5: h5py.Group, group_name='/', dataset_name='dataset',
                  compression=H5CompressionFilter.LZF, filter_opts=None,
                  attrs=None):
     """
@@ -61,45 +61,43 @@ def convert_file(fname, out_fname, group_name='/', dataset_name='dataset',
     :return:
         None. Content is written directly to disk.
     """
-    # opening as `append` mode allows us to add additional datasets
-    with h5py.File(out_fname) as fid:
-        with rasterio.open(fname) as ds:
+    with rasterio.open(fname) as ds:
 
-            # create empty or copy the user supplied filter options
-            if not filter_opts:
-                filter_opts = dict()
-            else:
-                filter_opts = filter_opts.copy()
+        # create empty or copy the user supplied filter options
+        if not filter_opts:
+            filter_opts = dict()
+        else:
+            filter_opts = filter_opts.copy()
 
-            # use sds native chunks if none are provided
-            if 'chunks' not in filter_opts:
-                filter_opts['chunks'] = (256, 256)
+        # use sds native chunks if none are provided
+        if 'chunks' not in filter_opts:
+            filter_opts['chunks'] = (256, 256)
 
-            # read all cols for n rows (ytile), as the GA's DEM is BSQ interleaved
-            ytile = filter_opts['chunks'][0]
+        # read all cols for n rows (ytile), as the GA's DEM is BSQ interleaved
+        ytile = filter_opts['chunks'][0]
 
-            # dataset attributes
-            if attrs:
-                attrs = attrs.copy()
-            else:
-                attrs = {}
-            attrs['geotransform'] = ds.transform.to_gdal()
-            attrs['crs_wkt'] = ds.crs.wkt
+        # dataset attributes
+        if attrs:
+            attrs = attrs.copy()
+        else:
+            attrs = {}
+        attrs['geotransform'] = ds.transform.to_gdal()
+        attrs['crs_wkt'] = ds.crs.wkt
 
-            # dataset creation options
-            kwargs = compression.config(**filter_opts).dataset_compression_kwargs()
-            kwargs['shape'] = (ds.height, ds.width)
-            kwargs['dtype'] = ds.dtypes[0]
+        # dataset creation options
+        kwargs = compression.config(**filter_opts).dataset_compression_kwargs()
+        kwargs['shape'] = (ds.height, ds.width)
+        kwargs['dtype'] = ds.dtypes[0]
 
-            dataset_name = ppjoin(group_name, dataset_name)
-            dataset = fid.create_dataset(dataset_name, **kwargs)
-            attach_image_attributes(dataset, attrs)
+        dataset_name = ppjoin(group_name, dataset_name)
+        dataset = out_h5.create_dataset(dataset_name, **kwargs)
+        attach_image_attributes(dataset, attrs)
 
-            # process each tile
-            for tile in generate_tiles(ds.width, ds.height, ds.width, ytile):
-                idx = (slice(tile[0][0], tile[0][1]), slice(tile[1][0], tile[1][1]))
-                data = ds.read(1, window=tile)
-                dataset[idx] = data
+        # process each tile
+        for tile in generate_tiles(ds.width, ds.height, ds.width, ytile):
+            idx = (slice(tile[0][0], tile[0][1]), slice(tile[1][0], tile[1][1]))
+            data = ds.read(1, window=tile)
+            dataset[idx] = data
 
 
 def jaxa_buildvrt(indir, outdir):
@@ -165,7 +163,7 @@ def jaxa_buildvrt(indir, outdir):
             check_call(cmd)
 
 
-def jaxa_tile(fname, out_fname, compression=H5CompressionFilter.LZF,
+def jaxa_tile(fname, out_h5: h5py.Group, compression=H5CompressionFilter.LZF,
               filter_opts=None):
     """
     Convert a JAXA DSM .tar.gz file into a HDF5 file.
@@ -183,5 +181,5 @@ def jaxa_tile(fname, out_fname, compression=H5CompressionFilter.LZF,
                 raster_fname = RASTERIO_PREFIX.format(fname, name)
 
                 # convert
-                convert_file(raster_fname, out_fname, dataset_name=ds_name,
+                convert_file(raster_fname, out_h5, dataset_name=ds_name,
                              compression=compression, filter_opts=filter_opts)

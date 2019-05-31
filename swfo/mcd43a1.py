@@ -21,7 +21,7 @@ RASTERIO_PREFIX = 'tar:{}!'
 GDAL_PREFIX = '/vsitar/{}'
 
 
-def convert_tile(fname, out_fname, compression, filter_opts):
+def convert_tile(fname, out_h5: h5py.Group, compression, filter_opts):
     """
     Convert a MCD43A1 HDF4 tile into HDF5.
     Global and datasetl level metadata are copied across.
@@ -29,8 +29,8 @@ def convert_tile(fname, out_fname, compression, filter_opts):
     :param fname:
         A str containing the MCD43A1 filename.
 
-    :param out_fname:
-        A str containing the output filename for the HDF5 file.
+    :param out_h5:
+        A h5py.Group to write the output data to
 
     :param compression:
         The compression filter to use.
@@ -60,52 +60,51 @@ def convert_tile(fname, out_fname, compression, filter_opts):
                 }
 
     # convert data
-    with h5py.File(out_fname, 'w') as fid:
-        with netCDF4.Dataset(fname) as ds:
-            ds.set_auto_scale(False)
+    with netCDF4.Dataset(fname) as ds:
+        ds.set_auto_scale(False)
 
-            # global attributes
-            global_attrs = {key: ds.getncattr(key) for key in ds.ncattrs()}
-            attach_attributes(fid, global_attrs)
+        # global attributes
+        global_attrs = {key: ds.getncattr(key) for key in ds.ncattrs()}
+        attach_attributes(out_h5, global_attrs)
 
-            # find and convert every subsdataset (sds)
-            for sds_name in ds.variables:
-                sds = ds.variables[sds_name]
+        # find and convert every subsdataset (sds)
+        for sds_name in ds.variables:
+            sds = ds.variables[sds_name]
 
-                # create empty or copy the user supplied filter options
-                if not filter_opts:
-                    f_opts = dict()
-                else:
-                    f_opts = filter_opts.copy()
+            # create empty or copy the user supplied filter options
+            if not filter_opts:
+                f_opts = dict()
+            else:
+                f_opts = filter_opts.copy()
 
-                # use sds native chunks if none are provided
-                if 'chunks' not in f_opts:
-                    f_opts['chunks'] = sds.chunking()
+            # use sds native chunks if none are provided
+            if 'chunks' not in f_opts:
+                f_opts['chunks'] = sds.chunking()
 
-                # modify to have 3D chunks if we have a multiband sds
-                if len(sds.shape) == 3 and len(f_opts['chunks']) == 2:
-                    f_opts['chunks'].append(1)
-                    f_opts['chunks'] = tuple(f_opts['chunks'])
-                else:
-                    f_opts['chunks'] = tuple(f_opts['chunks'])
+            # modify to have 3D chunks if we have a multiband sds
+            if len(sds.shape) == 3 and len(f_opts['chunks']) == 2:
+                f_opts['chunks'].append(1)
+                f_opts['chunks'] = tuple(f_opts['chunks'])
+            else:
+                f_opts['chunks'] = tuple(f_opts['chunks'])
 
-                # subdataset attributes and spatial attributes
-                attrs = {key: sds.getncattr(key) for key in sds.ncattrs()}
-                # attrs['geotransform'] = sds.transform.to_gdal()
-                # attrs['crs_wkt'] = sds.crs.wkt
-                attrs.update(geospatial[sds_name])
+            # subdataset attributes and spatial attributes
+            attrs = {key: sds.getncattr(key) for key in sds.ncattrs()}
+            # attrs['geotransform'] = sds.transform.to_gdal()
+            # attrs['crs_wkt'] = sds.crs.wkt
+            attrs.update(geospatial[sds_name])
 
-                data = sds[:]
-                if len(data.shape) == 3:
-                    # the band dimension is the last one, but we want it to be the first
-                    assert data.shape[-1] == 3
-                    data = numpy.transpose(data, (2, 0, 1))
-                    f_opts['chunks'] = (f_opts['chunks'][2], f_opts['chunks'][0], f_opts['chunks'][1])
+            data = sds[:]
+            if len(data.shape) == 3:
+                # the band dimension is the last one, but we want it to be the first
+                assert data.shape[-1] == 3
+                data = numpy.transpose(data, (2, 0, 1))
+                f_opts['chunks'] = (f_opts['chunks'][2], f_opts['chunks'][0], f_opts['chunks'][1])
 
-                # write to disk as an IMAGE Class Dataset
-                write_h5_image(data, sds_name, fid, attrs=attrs,
-                               compression=compression,
-                               filter_opts=f_opts)
+            # write to disk as an IMAGE Class Dataset
+            write_h5_image(data, sds_name, out_h5, attrs=attrs,
+                           compression=compression,
+                           filter_opts=f_opts)
 
 
 def buildvrt(indir, outdir):
@@ -154,79 +153,76 @@ def buildvrt(indir, outdir):
                 check_call(cmd)
 
 
-def convert_vrt(fname, out_fname, dataset_name='dataset',
+def convert_vrt(fname, out_h5: h5py.Group, dataset_name='dataset',
                 compression=H5CompressionFilter.LZF, filter_opts=None,
                 attrs=None):
     """
     Convert the VRT mosaic to HDF5.
-    The HDF5 file specified by out_fname will be opened
-    in append mode.
     """
-    with h5py.File(out_fname) as fid:
-        with rasterio.open(fname) as rds:
-            # set default chunks and set dimensions
+    with rasterio.open(fname) as rds:
+        # set default chunks and set dimensions
+        if rds.count == 3:
+            chunks = (3, 256, 256)
+            dims = (3, rds.height, rds.width)
+        else:
+            chunks = (256, 256)
+            dims = (rds.height, rds.width)
+
+        # create empty or copy the user supplied filter options
+        if not filter_opts:
+            filter_opts = dict()
+            filter_opts['chunks'] = chunks
+        else:
+            filter_opts = filter_opts.copy()
+
+        if 'chunks' not in filter_opts:
+            filter_opts['chunks'] = chunks
+
+        # modify to have 3D chunks if we have a multiband vrt
+        if rds.count == 3 and len(filter_opts['chunks']) != 3:
+            # copy the users original 2D chunk and insert the third
+            chunks = list(filter_opts['chunks'])
+            chunks.insert(0, 3)
+            filter_opts['chunks'] = chunks
+
+        # dataset attributes
+        if attrs:
+            attrs = attrs.copy()
+        else:
+            attrs = {}
+
+        attrs['geotransform'] = rds.transform.to_gdal()
+        attrs['crs_wkt'] = rds.crs.wkt
+        attrs['nodata'] = rds.nodata
+
+        # dataset creation options
+        kwargs = compression.config(**filter_opts).dataset_compression_kwargs()
+        kwargs['shape'] = dims
+        kwargs['dtype'] = rds.dtypes[0]
+
+        dataset = out_h5.create_dataset(dataset_name, **kwargs)
+        attach_image_attributes(dataset, attrs)
+
+        # tiled processing (all cols by chunked rows)
+        ytile = filter_opts['chunks'][1] if rds.count == 3 else filter_opts['chunks'][0]
+        tiles = generate_tiles(rds.width, rds.height, rds.width, ytile)
+
+        for tile in tiles:
+            # numpy index
             if rds.count == 3:
-                chunks = (3, 256, 256)
-                dims = (3, rds.height, rds.width)
+                idx = (
+                    slice(None),
+                    slice(tile[0][0], tile[0][1]),
+                    slice(tile[1][0], tile[1][1])
+                )
             else:
-                chunks = (256, 256)
-                dims = (rds.height, rds.width)
+                idx = (
+                    slice(tile[0][0], tile[0][1]),
+                    slice(tile[1][0], tile[1][1])
+                )
 
-            # create empty or copy the user supplied filter options
-            if not filter_opts:
-                filter_opts = dict()
-                filter_opts['chunks'] = chunks
-            else:
-                filter_opts = filter_opts.copy()
+            # ensure single band rds is read as 2D not 3D
+            data = rds.read(window=tile) if rds.count == 3 else rds.read(1, window=tile)
 
-            if 'chunks' not in filter_opts:
-                filter_opts['chunks'] = chunks
-
-            # modify to have 3D chunks if we have a multiband vrt
-            if rds.count == 3 and len(filter_opts['chunks']) != 3:
-                # copy the users original 2D chunk and insert the third
-                chunks = list(filter_opts['chunks'])
-                chunks.insert(0, 3)
-                filter_opts['chunks'] = chunks
-
-            # dataset attributes
-            if attrs:
-                attrs = attrs.copy()
-            else:
-                attrs = {}
-
-            attrs['geotransform'] = rds.transform.to_gdal()
-            attrs['crs_wkt'] = rds.crs.wkt
-            attrs['nodata'] = rds.nodata
-
-            # dataset creation options
-            kwargs = compression.config(**filter_opts).dataset_compression_kwargs()
-            kwargs['shape'] = dims
-            kwargs['dtype'] = rds.dtypes[0]
-
-            dataset = fid.create_dataset(dataset_name, **kwargs)
-            attach_image_attributes(dataset, attrs)
-
-            # tiled processing (all cols by chunked rows)
-            ytile = filter_opts['chunks'][1] if rds.count == 3 else filter_opts['chunks'][0]
-            tiles = generate_tiles(rds.width, rds.height, rds.width, ytile)
-
-            for tile in tiles:
-                # numpy index
-                if rds.count == 3:
-                    idx = (
-                        slice(None),
-                        slice(tile[0][0], tile[0][1]),
-                        slice(tile[1][0], tile[1][1])
-                    )
-                else:
-                    idx = (
-                        slice(tile[0][0], tile[0][1]),
-                        slice(tile[1][0], tile[1][1])
-                    )
-
-                # ensure single band rds is read as 2D not 3D
-                data = rds.read(window=tile) if rds.count == 3 else rds.read(1, window=tile)
-
-                # write
-                dataset[idx] = data
+            # write
+            dataset[idx] = data

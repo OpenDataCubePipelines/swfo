@@ -14,17 +14,17 @@ import time
 from sys import stdout
 from contextlib import contextmanager
 
-from multiprocessing import Pool as ProcessPool
+from multiprocessing import Pool as ProcessPool, Lock
 import fnmatch
 import h5py
 import numpy as np
 import click
+from memory_profiler import profile
 
 from wagl.hdf5.compression import H5CompressionFilter
 from wagl.hdf5 import attach_image_attributes
 from wagl.tiling import generate_tiles
 from wagl.constants import BrdfModelParameters
-from memory_profiler import profile
 
 import brdf_shape
 
@@ -35,6 +35,7 @@ BRDF_AVG_FILE_FMT = 'MCD43A1.JLAV.006.{}.DOY.{:03}.{}.h5'
 TILES = ['h29v10', 'h30v10', 'h31v10', 'h32v10', 'h27v11', 'h28v11', 'h29v11', 'h30v11',
          'h31v11', 'h27v12', 'h28v12', 'h29v12', 'h30v12', 'h31v12', 'h28v13', 'h29v13']
 
+LOCKS = {}
 
 @contextmanager
 def timing(task_name):
@@ -263,7 +264,7 @@ def brdf_indices_quality_check(avg_data=None):
          also included.
     """
     filtered_data = {}
-    for key in avg_data.keys():
+    for key in avg_data:
         # set the mean brdf data from the avg_data dict for each keys
         iso_mean = avg_data[key][BrdfModelParameters.ISO]['mean']
         vol_mean = avg_data[key][BrdfModelParameters.VOL]['mean']
@@ -516,7 +517,6 @@ def apply_threshold(h5_info, band_name, window, filter_size, thresholds, bad_ind
         data_all_params = np.ma.array([data_dict[date]
                                        for date in all_data_keys[start_idx:end_idx]])
 
-
         for param_index, param in enumerate(BrdfModelParameters):
 
             # get the data iso, vol or geo from data which is a dict for all the keys and convert to numpy array
@@ -605,30 +605,26 @@ def apply_convolution(filename, h5_info, window, filter_size, mask_indices):
     return data_convolved
 
 
-def post_cleanup_process(h5_info, outdir, tile, doy, shape, data_chunks, compute_chunks,
-                         clean_data_file, attrs, filter_size, band, bad_indices, compression):
+def post_cleanup_process(window, set_doys, h5_info, outdir, tile, clean_data_file,
+                         filter_size, band, bad_indices):
     """
     This function implements gaussian smoothing of the cleaned dataset,
     temporal averaging of the gaussian smooth dataset,
     quality check based on brdf_shape indices and writes the final
     brdf averaged parameters to a h5 file.
     """
-    average_metadata = {key: h5_info[key] for key in h5_info.keys() if folder_doy(key) == doy}
 
-    # TODO create dataset to store uuid for brdf_fallback provenance (use h5_info for threhold generation
-    # and average_metadata for average brdf parameters generation. h5_info and average_metadata are
-    # dictionary(eg : key = '2002.01.01', value = 'absolute path to a h5 file'
+    data_convolved = apply_convolution(clean_data_file, h5_info, window, filter_size,
+                                       bad_indices[window])
 
-    outfile = pjoin(outdir, BRDF_AVG_FILE_FMT.format(tile, doy, band))
-    with h5py.File(outfile, 'w') as fid:
-        create_brdf_datasets(fid, band, shape, attrs, chunks=data_chunks, compression=compression)
-        for x, y in generate_tiles(shape[0], shape[1], compute_chunks[0], compute_chunks[1]):
-            window = (slice(*y), slice(*x))
-            data_convolved = apply_convolution(clean_data_file, h5_info, window, filter_size,
-                                               bad_indices[window])
-            avg_data = temporal_average(data_convolved, doy)
-            filtered_data = brdf_indices_quality_check(avg_data=avg_data)
-            write_chunk(filtered_data, fid, band, window=(slice(None),) + window)
+    for doy in set_doys:
+        avg_data = temporal_average(data_convolved, doy)
+        filtered_data = brdf_indices_quality_check(avg_data=avg_data)
+
+        outfile = pjoin(outdir, BRDF_AVG_FILE_FMT.format(tile, doy, band))
+        with LOCKS[outfile]:
+            with h5py.File(outfile) as fid:
+                write_chunk(filtered_data, fid, band, window=(slice(None),) + window)
 
 
 def write_brdf_fallback_band(brdf_dir, tile, band, outdir, filter_size,
@@ -675,18 +671,36 @@ def write_brdf_fallback_band(brdf_dir, tile, band, outdir, filter_size,
                 for key, value in entry.items():
                     clean_data[key][(slice(None),) + window] = value
 
-        set_doys = sorted(set(folder_doy(item) for item in h5_info))
-        args = []
+        with timing('post cleanup'):
+            set_doys = sorted(set(folder_doy(item) for item in h5_info))
 
-        for doy in set_doys:
-            print('doy', doy, file=stdout)
-            args.append([h5_info, outdir, tile, doy, shape, data_chunks, compute_chunks, clean_data_file, attrs,
-                         filter_size, band, bad_indices, compression])
-        if nprocs:
-            with ProcessPool(processes=nprocs) as pool:
-                pool.starmap(post_cleanup_process, args)
-        else:
-            _ = [post_cleanup_process(*arg) for arg in args]
+            for doy in set_doys:
+                print('doy', doy, file=stdout)
+
+                average_metadata = {key: h5_info[key] for key in h5_info if folder_doy(key) == doy}
+
+                # TODO create dataset to store uuid for brdf_fallback provenance (use h5_info for threhold generation
+                # and average_metadata for average brdf parameters generation. h5_info and average_metadata are
+                # dictionary(eg : key = '2002.01.01', value = 'absolute path to a h5 file'
+
+                outfile = pjoin(outdir, BRDF_AVG_FILE_FMT.format(tile, doy, band))
+                LOCKS[outfile] = Lock()
+
+                with h5py.File(outfile, 'w') as fid:
+                    create_brdf_datasets(fid, band, shape, attrs, chunks=data_chunks, compression=compression)
+
+            args = []
+            for x, y in generate_tiles(shape[0], shape[1], compute_chunks[0], compute_chunks[1]):
+                window = (slice(*y), slice(*x))
+
+                args.append([window, set_doys, h5_info, outdir, tile,
+                             clean_data_file, filter_size, band, bad_indices])
+
+            if nprocs:
+                with ProcessPool(processes=nprocs) as pool:
+                    pool.starmap(post_cleanup_process, args)
+            else:
+                _ = [post_cleanup_process(*arg) for arg in args]
 
 
 @click.command()

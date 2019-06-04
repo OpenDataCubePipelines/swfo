@@ -346,8 +346,8 @@ def calculate_thresholds(h5_info, band_name, shape, compute_chunks, nprocs=None)
             args.append([h5_info, band_name, index, window])
 
         if nprocs:
-            pool = ProcessPool(processes=nprocs)
-            results = pool.map(get_std_block, args)
+            with ProcessPool(processes=nprocs) as pool:
+                results = pool.map(get_std_block, args)
         else:
             results = [get_std_block(arg) for arg in args]
 
@@ -467,7 +467,7 @@ def temporal_average(data, doy):
     return {doy: tmp}
 
 
-def apply_threshold(outfile, h5_info, band_name, window, filter_size, thresholds, bad_indices):
+def apply_threshold(args):
     """
     This function applies median filter on the dataset, median filter with size of
     (2 * filter_size + 1) is applied as a running median filter with time steps centered
@@ -479,11 +479,19 @@ def apply_threshold(outfile, h5_info, band_name, window, filter_size, thresholds
     day [004, 005, 006, 007, 008 and 009] since day 010, 011, 012 are missing.
 
     """
+    h5_info, band_name, window, filter_size, thresholds, bad_indices = args
+
     all_data_keys = sorted(list(h5_info.keys()))
 
     def get_albedo_data(filename, window):
         with h5py.File(filename, 'r') as fid:
             return read_brdf_dataset(fid[band_name], window)
+
+    result = {}
+    for key in all_data_keys:
+        y_shape = window[0].stop - window[0].start
+        x_shape = window[1].stop - window[1].start
+        result[key] = np.full(shape=(3, y_shape, x_shape), fill_value=32767, dtype=np.int16)
 
     # dictionary mapping date to data
     data_dict = {}
@@ -538,7 +546,9 @@ def apply_threshold(outfile, h5_info, band_name, window, filter_size, thresholds
             clean_data = clean_data * 1000
             clean_data = clean_data.filled(fill_value=32767).astype(np.int16)
 
-            outfile[key][(param_index,) + window] = clean_data
+            result[key][param_index, :, :] = clean_data
+
+        return (window, result)
 
 
 def apply_convolution(filename, h5_info, window, filter_size, mask_indices):
@@ -655,12 +665,20 @@ def write_brdf_fallback_band(brdf_dir, tile, band, outdir, filter_size,
             for key in h5_info:
                 create_dataset(clean_data, key, (3, shape[0], shape[1]), {})
 
+            args = []
             for x, y in generate_tiles(shape[0], shape[1], compute_chunks[0], compute_chunks[1]):
                 window = (slice(*y), slice(*x))
+                args.append([h5_info, albedo_band_name(band), window, filter_size, thresholds, bad_indices[window]])
 
-                apply_threshold(clean_data, h5_info, albedo_band_name(band), window, filter_size,
-                                thresholds, bad_indices[window])
+            if nprocs:
+                with ProcessPool(processes=nprocs) as pool:
+                    clean_data_shards = pool.map(apply_threshold, args)
+            else:
+                clean_data_shards = map(apply_threshold, args)
 
+            for window, entry in clean_data_shards:
+                for key, value in entry.items():
+                    clean_data[key][(slice(None),) + window] = value
 
         set_doys = sorted(set(folder_doy(item) for item in h5_info))
         args = []
@@ -670,8 +688,8 @@ def write_brdf_fallback_band(brdf_dir, tile, band, outdir, filter_size,
             args.append([h5_info, outdir, tile, doy, shape, data_chunks, compute_chunks, clean_data_file, attrs,
                          filter_size, band, bad_indices, compression])
         if nprocs:
-            pool = ProcessPool(processes=nprocs)
-            pool.map(post_cleanup_process, args)
+            with ProcessPool(processes=nprocs) as pool:
+                pool.map(post_cleanup_process, args)
         else:
             for arg in args:
                 post_cleanup_process(arg)

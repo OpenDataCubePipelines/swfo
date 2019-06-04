@@ -310,12 +310,11 @@ def brdf_indices_quality_check(avg_data=None):
     return filtered_data
 
 
-def get_std_block(args):
+def get_std_block(h5_info, band_name, index, window):
     """
     A function to compute a standard deviation for across a temporal axis.
     This function was written to facilitate parallel processing.
     """
-    h5_info, band_name, index, window = args
 
     def __get_data(dat_filename, window):
         with h5py.File(dat_filename, 'r') as fid:
@@ -347,9 +346,9 @@ def calculate_thresholds(h5_info, band_name, shape, compute_chunks, nprocs=None)
 
         if nprocs:
             with ProcessPool(processes=nprocs) as pool:
-                results = pool.map(get_std_block, args)
+                results = pool.starmap(get_std_block, args)
         else:
-            results = [get_std_block(arg) for arg in args]
+            results = [get_std_block(*arg) for arg in args]
 
         thresh_dict[param] = np.nanmean(results)
 
@@ -467,7 +466,7 @@ def temporal_average(data, doy):
     return {doy: tmp}
 
 
-def apply_threshold(args):
+def apply_threshold(h5_info, band_name, window, filter_size, thresholds, bad_indices):
     """
     This function applies median filter on the dataset, median filter with size of
     (2 * filter_size + 1) is applied as a running median filter with time steps centered
@@ -479,8 +478,6 @@ def apply_threshold(args):
     day [004, 005, 006, 007, 008 and 009] since day 010, 011, 012 are missing.
 
     """
-    h5_info, band_name, window, filter_size, thresholds, bad_indices = args
-
     all_data_keys = sorted(list(h5_info.keys()))
 
     def get_albedo_data(filename, window):
@@ -608,16 +605,14 @@ def apply_convolution(filename, h5_info, window, filter_size, mask_indices):
     return data_convolved
 
 
-def post_cleanup_process(args):
+def post_cleanup_process(h5_info, outdir, tile, doy, shape, data_chunks, compute_chunks,
+                         clean_data_file, attrs, filter_size, band, bad_indices, compression):
     """
     This function implements gaussian smoothing of the cleaned dataset,
     temporal averaging of the gaussian smooth dataset,
     quality check based on brdf_shape indices and writes the final
     brdf averaged parameters to a h5 file.
     """
-    h5_info, outdir, tile, doy, shape, data_chunks, compute_chunks, \
-        clean_data_file, attrs, filter_size, band, bad_indices, compression = args
-
     average_metadata = {key: h5_info[key] for key in h5_info.keys() if folder_doy(key) == doy}
 
     # TODO create dataset to store uuid for brdf_fallback provenance (use h5_info for threhold generation
@@ -672,9 +667,9 @@ def write_brdf_fallback_band(brdf_dir, tile, band, outdir, filter_size,
 
             if nprocs:
                 with ProcessPool(processes=nprocs) as pool:
-                    clean_data_shards = pool.map(apply_threshold, args)
+                    clean_data_shards = pool.starmap(apply_threshold, args)
             else:
-                clean_data_shards = map(apply_threshold, args)
+                clean_data_shards = [apply_threshold(*arg) for arg in args]
 
             for window, entry in clean_data_shards:
                 for key, value in entry.items():
@@ -684,15 +679,14 @@ def write_brdf_fallback_band(brdf_dir, tile, band, outdir, filter_size,
         args = []
 
         for doy in set_doys:
-            print('doy', file=stdout)
+            print('doy', doy, file=stdout)
             args.append([h5_info, outdir, tile, doy, shape, data_chunks, compute_chunks, clean_data_file, attrs,
                          filter_size, band, bad_indices, compression])
         if nprocs:
             with ProcessPool(processes=nprocs) as pool:
-                pool.map(post_cleanup_process, args)
+                pool.starmap(post_cleanup_process, args)
         else:
-            for arg in args:
-                post_cleanup_process(arg)
+            _ = [post_cleanup_process(*arg) for arg in args]
 
 
 @click.command()

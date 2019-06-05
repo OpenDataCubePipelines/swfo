@@ -545,7 +545,7 @@ def apply_threshold(h5_info, band_name, window, filter_size, thresholds, bad_ind
 
             result[key][param_index, :, :] = clean_data
 
-        return (window, result)
+    return (window, result)
 
 
 def apply_convolution(filename, h5_info, window, filter_size, mask_indices):

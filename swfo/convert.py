@@ -478,7 +478,7 @@ def jaxa_tiles(indir, outdir, compression, filter_opts):
 @jaxa_dsm_cli.command('h5-md', help='Convert a JAXA DSM .tar.gz file into a HDF5 file with metadata.')
 @_io_dir_options
 @_compression_options
-def jaxa_tiles(indir, outdir, compression, filter_opts):
+def jaxa_tiles_md(indir, outdir, compression, filter_opts):
     """
     Convert JAXA tar.gz files into a HDF5 files with metadata.
     """

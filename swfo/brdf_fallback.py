@@ -118,7 +118,7 @@ def gauss_filter(filter_size):
     return np.array([np.exp(-0.5*((j-filter_size)/sig)**2) for j in range(2*filter_size+1)])
 
 
-def hdf5_files(brdf_dir, tile, year_from=None):
+def hdf5_files(brdf_dir, tile, year_from=None, year_to=None):
     """
     A function to extract relevant MODIS BRDF acquisition details
     from the root folder where BRDF data are stored.
@@ -138,6 +138,9 @@ def hdf5_files(brdf_dir, tile, year_from=None):
     for item in os.listdir(brdf_dir):
         if year_from is not None and folder_year(item) < year_from:
             continue
+        elif year_to is not None and folder_year(item) > year_to: 
+            continue 
+
         files = os.listdir(pjoin(brdf_dir, item))
         try:
             filename = fnmatch.filter(files, '*.{}*.h5'.format(tile))[0]
@@ -628,12 +631,13 @@ def post_cleanup_process(window, set_doys, h5_info, outdir, tile, clean_data_fil
 
 
 def write_brdf_fallback_band(brdf_dir, tile, band, outdir, filter_size,
-                             pthresh=10.0, year_from=None, data_chunks=(1, 240, 240),
+                             pthresh=10.0, year_from=None, year_to=None, data_chunks=(1, 240, 240),
                              compute_chunks=(100, 2400), nprocs=None, compression=H5CompressionFilter.BLOSC_ZSTANDARD):
 
     with timing('calculate thresholds'):
-        h5_info = hdf5_files(brdf_dir, tile=tile, year_from=year_from)
-
+        h5_info = hdf5_files(brdf_dir, tile=tile, year_from=year_from, year_to=year_to)
+        print(h5_info)
+        exit()
         min_numpix_required = np.rint((pthresh / 100.0) * len(h5_info))
 
         # get counts of good pixel quality
@@ -704,16 +708,17 @@ def write_brdf_fallback_band(brdf_dir, tile, band, outdir, filter_size,
 
 
 @click.command()
-@click.option('--brdf-dir', default='/g/data/v10/eoancillarydata.reS/fetch/BRDF/MCD43A1.006/')
+@click.option('--brdf-dir', default='/g/data/v10/eoancillarydata.reS/brdf.ia/MCD43A1.006/')
 @click.option('--outdir', default='/g/data/u46/users/pd1813/BRDF_PARAM/test_v9')
 @click.option('--tile', default='h29v12')
 @click.option('--band', default='Band1')
-@click.option('--year-from', default=2002)
+@click.option('--year-from', default=2017)
+@click.option('--year-to', default= 2018)
 @click.option('--filter-size', default=22)
 @click.option('--nprocs', default=15)
 @click.option('--compression', default=H5CompressionFilter.BLOSC_ZSTANDARD)
-def main(brdf_dir, outdir, tile, band, year_from, filter_size, nprocs, compression):
-    write_brdf_fallback_band(brdf_dir, tile, band, outdir, filter_size, year_from=year_from, nprocs=nprocs,
+def main(brdf_dir, outdir, tile, band, year_from, year_to, filter_size, nprocs, compression):
+    write_brdf_fallback_band(brdf_dir, tile, band, outdir, filter_size, year_from=year_from, year_to=year_to, nprocs=nprocs,
                              compression=compression)
 
 

@@ -577,7 +577,9 @@ def apply_convolution(filename, h5_info, window, filter_size, mask_indices):
         temp = {}
 
         # get clean dataset for all available dates for given window
-        data_clean = np.array([__get_clean_data(filename, key, (param_index,) + window) for key in all_data_keys])
+        data_clean = np.full(shape=(len(all_data_keys),) + shape_of_window(window), fill_value=np.nan, dtype='float32')
+        for layer, key in enumerate(all_data_keys):
+            data_clean[layer] = __get_clean_data(filename, key, (param_index,) + window)
 
         # set data that needs to be padded at the end and front to perform convolution
         data_head = np.array([data_clean[0] for i in range(filter_size)])
@@ -596,6 +598,7 @@ def apply_convolution(filename, h5_info, window, filter_size, mask_indices):
             data_padded[index, :, :] = np.where(invalid_data[index, :, :], median_data, data_padded[index, :, :])
 
         # convert data to floating point with hard coded scale factor of 0.001
+        # TODO is this correct?
         data_padded = data_padded * 0.001
 
         # perform convolution using Gaussian filter defined above

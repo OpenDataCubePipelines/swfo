@@ -10,18 +10,21 @@ import tempfile
 import os
 from os.path import join as pjoin
 import datetime
+import time
+from sys import stdout
+from contextlib import contextmanager
 
-import multiprocessing as mp
+from multiprocessing import Pool as ProcessPool, Lock
 import fnmatch
 import h5py
 import numpy as np
 import click
+from memory_profiler import profile
 
 from wagl.hdf5.compression import H5CompressionFilter
 from wagl.hdf5 import attach_image_attributes
 from wagl.tiling import generate_tiles
 from wagl.constants import BrdfModelParameters
-from memory_profiler import profile
 
 import brdf_shape
 
@@ -31,6 +34,17 @@ BRDF_AVG_FILE_FMT = 'MCD43A1.JLAV.006.{}.DOY.{:03}.{}.h5'
 
 TILES = ['h29v10', 'h30v10', 'h31v10', 'h32v10', 'h27v11', 'h28v11', 'h29v11', 'h30v11',
          'h31v11', 'h27v12', 'h28v12', 'h29v12', 'h30v12', 'h31v12', 'h28v13', 'h29v13']
+
+LOCKS = {}
+
+@contextmanager
+def timing(task_name):
+    start_time = time.time()
+    print('starting', task_name, 'at', time.ctime(int(start_time)), file=stdout)
+    stdout.flush()
+    yield
+    print('finished', task_name, 'in', time.time() - start_time, file=stdout)
+    stdout.flush()
 
 
 def albedo_band_name(band):
@@ -250,7 +264,7 @@ def brdf_indices_quality_check(avg_data=None):
          also included.
     """
     filtered_data = {}
-    for key in avg_data.keys():
+    for key in avg_data:
         # set the mean brdf data from the avg_data dict for each keys
         iso_mean = avg_data[key][BrdfModelParameters.ISO]['mean']
         vol_mean = avg_data[key][BrdfModelParameters.VOL]['mean']
@@ -297,12 +311,11 @@ def brdf_indices_quality_check(avg_data=None):
     return filtered_data
 
 
-def get_std_block(args):
+def get_std_block(h5_info, band_name, index, window):
     """
     A function to compute a standard deviation for across a temporal axis.
     This function was written to facilitate parallel processing.
     """
-    h5_info, band_name, index, window = args
 
     def __get_data(dat_filename, window):
         with h5py.File(dat_filename, 'r') as fid:
@@ -333,10 +346,10 @@ def calculate_thresholds(h5_info, band_name, shape, compute_chunks, nprocs=None)
             args.append([h5_info, band_name, index, window])
 
         if nprocs:
-            pool = mp.Pool(processes=nprocs)
-            results = pool.map(get_std_block, args)
+            with ProcessPool(processes=nprocs) as pool:
+                results = pool.starmap(get_std_block, args)
         else:
-            results = [get_std_block(arg) for arg in args]
+            results = [get_std_block(*arg) for arg in args]
 
         thresh_dict[param] = np.nanmean(results)
 
@@ -345,7 +358,7 @@ def calculate_thresholds(h5_info, band_name, shape, compute_chunks, nprocs=None)
 
 def create_dataset(group, band_name, shape, attrs,
                    dtype=np.int16, chunks=(1, 240, 240), filter_opts=None,
-                   compression=H5CompressionFilter.LZF):
+                   compression=H5CompressionFilter.BLOSC_ZSTANDARD):
     if filter_opts is None:
         filter_opts = {}
     else:
@@ -364,7 +377,7 @@ def create_dataset(group, band_name, shape, attrs,
 
 def create_brdf_datasets(group, band_name, shape, common_attrs,
                          chunks=(1, 240, 240), filter_opts=None,
-                         compression=H5CompressionFilter.LZF):
+                         compression=H5CompressionFilter.BLOSC_ZSTANDARD):
 
     attrs = dict(scale_factor=0.0001, add_offset=0,
                  _FillValue=32767, bands="{}: 1, {}: 2:, {}: 3".format(BrdfModelParameters.ISO.value,
@@ -454,7 +467,7 @@ def temporal_average(data, doy):
     return {doy: tmp}
 
 
-def apply_threshold(outfile, h5_info, band_name, window, filter_size, thresholds, bad_indices):
+def apply_threshold(h5_info, band_name, window, filter_size, thresholds, bad_indices):
     """
     This function applies median filter on the dataset, median filter with size of
     (2 * filter_size + 1) is applied as a running median filter with time steps centered
@@ -472,6 +485,15 @@ def apply_threshold(outfile, h5_info, band_name, window, filter_size, thresholds
         with h5py.File(filename, 'r') as fid:
             return read_brdf_dataset(fid[band_name], window)
 
+    result = {}
+    for key in all_data_keys:
+        y_shape = window[0].stop - window[0].start
+        x_shape = window[1].stop - window[1].start
+        result[key] = np.full(shape=(3, y_shape, x_shape), fill_value=32767, dtype=np.int16)
+
+    # dictionary mapping date to data
+    data_dict = {}
+
     for index, key in enumerate(all_data_keys):
         # set the index's for the median filters
         start_idx = index - filter_size
@@ -482,11 +504,23 @@ def apply_threshold(outfile, h5_info, band_name, window, filter_size, thresholds
         if end_idx > len(all_data_keys) - 1:
             end_idx = len(all_data_keys)
 
+        # read the data relevant to this range
+        for date in all_data_keys[start_idx:end_idx]:
+            if date not in data_dict:
+                data_dict[date] = np.ma.masked_invalid(get_albedo_data(h5_info[date], (slice(None),) + window))
+
+        # clean up the data we don't need anymore
+        for date in list(data_dict):
+            if date not in all_data_keys[start_idx:end_idx]:
+                del data_dict[date]
+
+        data_all_params = np.ma.array([data_dict[date]
+                                       for date in all_data_keys[start_idx:end_idx]])
+
         for param_index, param in enumerate(BrdfModelParameters):
 
             # get the data iso, vol or geo from data which is a dict for all the keys and convert to numpy array
-            data_param = np.ma.array([np.ma.masked_invalid(get_albedo_data(h5_info[date], (param_index,) + window))
-                                      for date in all_data_keys[start_idx:end_idx]])
+            data_param = data_all_params[:, param_index, :, :]
 
             # extract the value for a key and mask invalid data
             clean_data = data_param[index - start_idx]
@@ -509,10 +543,11 @@ def apply_threshold(outfile, h5_info, band_name, window, filter_size, thresholds
             clean_data = clean_data * 1000
             clean_data = clean_data.filled(fill_value=32767).astype(np.int16)
 
-            outfile[key][(param_index,) + window] = clean_data
+            result[key][param_index, :, :] = clean_data
+
+    return (window, result)
 
 
-@profile
 def apply_convolution(filename, h5_info, window, filter_size, mask_indices):
     """
     This function applies convolution on the clean dataset from applied threshold
@@ -570,82 +605,102 @@ def apply_convolution(filename, h5_info, window, filter_size, mask_indices):
     return data_convolved
 
 
-@profile
-def post_cleanup_process(args):
+def post_cleanup_process(window, set_doys, h5_info, outdir, tile, clean_data_file,
+                         filter_size, band, bad_indices):
     """
     This function implements gaussian smoothing of the cleaned dataset,
     temporal averaging of the gaussian smooth dataset,
     quality check based on brdf_shape indices and writes the final
     brdf averaged parameters to a h5 file.
     """
-    h5_info, outdir, tile, doy, shape, data_chunks, compute_chunks, \
-        clean_data_file, attrs, filter_size, band, bad_indices, compression = args
 
-    average_metadata = {key: h5_info[key] for key in h5_info.keys() if folder_doy(key) == doy}
-    
-    # TODO create dataset to store uuid for brdf_fallback provenance (use h5_info for threhold generation 
-    # and average_metadata for average brdf parameters generation. h5_info and average_metadata are 
-    # dictionary(eg : key = '2002.01.01', value = 'absolute path to a h5 file' 
+    data_convolved = apply_convolution(clean_data_file, h5_info, window, filter_size,
+                                       bad_indices[window])
 
-    outfile = pjoin(outdir, BRDF_AVG_FILE_FMT.format(tile, doy, band))
-    with h5py.File(outfile, 'w') as fid:
-        create_brdf_datasets(fid, band, shape, attrs, chunks=data_chunks, compression=compression)
-        for x, y in generate_tiles(shape[0], shape[1], compute_chunks[0], compute_chunks[1]):
-            window = (slice(*y), slice(*x))
-            data_convolved = apply_convolution(clean_data_file, h5_info, window, filter_size,
-                                               bad_indices[window])
-            avg_data = temporal_average(data_convolved, doy)
-            filtered_data = brdf_indices_quality_check(avg_data=avg_data)
-            write_chunk(filtered_data, fid, band, window=(slice(None),) + window)
+    for doy in set_doys:
+        avg_data = temporal_average(data_convolved, doy)
+        filtered_data = brdf_indices_quality_check(avg_data=avg_data)
+
+        outfile = pjoin(outdir, BRDF_AVG_FILE_FMT.format(tile, doy, band))
+        with LOCKS[outfile]:
+            with h5py.File(outfile) as fid:
+                write_chunk(filtered_data, fid, band, window=(slice(None),) + window)
 
 
-@profile
 def write_brdf_fallback_band(brdf_dir, tile, band, outdir, filter_size,
                              pthresh=10.0, year_from=None, data_chunks=(1, 240, 240),
-                             compute_chunks=(240, 240), nprocs=None, compression=H5CompressionFilter.LZF):
+                             compute_chunks=(100, 2400), nprocs=None, compression=H5CompressionFilter.BLOSC_ZSTANDARD):
 
-    h5_info = hdf5_files(brdf_dir, tile=tile, year_from=year_from)
-    
-    min_numpix_required = np.rint((pthresh / 100.0) * len(h5_info))
+    with timing('calculate thresholds'):
+        h5_info = hdf5_files(brdf_dir, tile=tile, year_from=year_from)
 
-    # get counts of good pixel quality
-    quality_count = get_qualityband_count(h5_info=h5_info, band_name=quality_band_name(band))
-    quality_count = np.ma.masked_invalid(quality_count)
+        min_numpix_required = np.rint((pthresh / 100.0) * len(h5_info))
 
-    # get the index where band_quality number is less the minimum number of valid pixels required
-    bad_indices = (quality_count < min_numpix_required).filled(False)
+        # get counts of good pixel quality
+        quality_count = get_qualityband_count(h5_info=h5_info, band_name=quality_band_name(band))
+        quality_count = np.ma.masked_invalid(quality_count)
 
-    shape, attrs = get_band_info(h5_info, albedo_band_name(band))
-    shape = shape[-2:]
+        # get the index where band_quality number is less the minimum number of valid pixels required
+        bad_indices = (quality_count < min_numpix_required).filled(False)
 
-    thresholds = calculate_thresholds(h5_info, albedo_band_name(band), shape, compute_chunks, nprocs=nprocs)
+        shape, attrs = get_band_info(h5_info, albedo_band_name(band))
+        shape = shape[-2:]
+
+        thresholds = calculate_thresholds(h5_info, albedo_band_name(band), shape, compute_chunks, nprocs=nprocs)
 
     with tempfile.TemporaryDirectory() as tmp_dir:
+        # TODO outdir -> tmp_dir
         clean_data_file = pjoin(outdir, 'clean_data_{}_{}.h5'.format(band, tile))
-        
-        with h5py.File(clean_data_file, 'w') as clean_data:
+
+        with h5py.File(clean_data_file, 'w') as clean_data, timing('apply threshold'):
             for key in h5_info:
                 create_dataset(clean_data, key, (3, shape[0], shape[1]), {})
 
+            args = []
+            for x, y in generate_tiles(shape[0], shape[1], compute_chunks[0], compute_chunks[1]):
+                window = (slice(*y), slice(*x))
+                args.append([h5_info, albedo_band_name(band), window, filter_size, thresholds, bad_indices[window]])
+
+            if nprocs:
+                with ProcessPool(processes=nprocs) as pool:
+                    clean_data_shards = pool.starmap(apply_threshold, args)
+            else:
+                clean_data_shards = [apply_threshold(*arg) for arg in args]
+
+            for window, entry in clean_data_shards:
+                for key, value in entry.items():
+                    clean_data[key][(slice(None),) + window] = value
+
+        with timing('post cleanup'):
+            set_doys = sorted(set(folder_doy(item) for item in h5_info))
+
+            for doy in set_doys:
+                print('doy', doy, file=stdout)
+
+                average_metadata = {key: h5_info[key] for key in h5_info if folder_doy(key) == doy}
+
+                # TODO create dataset to store uuid for brdf_fallback provenance (use h5_info for threhold generation
+                # and average_metadata for average brdf parameters generation. h5_info and average_metadata are
+                # dictionary(eg : key = '2002.01.01', value = 'absolute path to a h5 file'
+
+                outfile = pjoin(outdir, BRDF_AVG_FILE_FMT.format(tile, doy, band))
+                LOCKS[outfile] = Lock()
+
+                with h5py.File(outfile, 'w') as fid:
+                    create_brdf_datasets(fid, band, shape, attrs, chunks=data_chunks, compression=compression)
+
+            args = []
             for x, y in generate_tiles(shape[0], shape[1], compute_chunks[0], compute_chunks[1]):
                 window = (slice(*y), slice(*x))
 
-                apply_threshold(clean_data, h5_info, albedo_band_name(band), window, filter_size,
-                                thresholds, bad_indices[window])
-       
+                args.append([window, set_doys, h5_info, outdir, tile,
+                             clean_data_file, filter_size, band, bad_indices])
 
-        set_doys = sorted(set(folder_doy(item) for item in h5_info))
-        args = []
-     
-        for doy in set_doys:
-            args.append([h5_info, outdir, tile, doy, shape, data_chunks, compute_chunks, clean_data_file, attrs,
-                         filter_size, band, bad_indices, compression])
-        if nprocs:
-            pool = mp.Pool(processes=nprocs)
-            pool.map(post_cleanup_process, args)
-        else:
-            for arg in args:
-                post_cleanup_process(arg)
+            if nprocs:
+                with ProcessPool(processes=nprocs) as pool:
+                    pool.starmap(post_cleanup_process, args)
+            else:
+                _ = [post_cleanup_process(*arg) for arg in args]
 
 
 @click.command()
@@ -656,7 +711,7 @@ def write_brdf_fallback_band(brdf_dir, tile, band, outdir, filter_size,
 @click.option('--year-from', default=2002)
 @click.option('--filter-size', default=22)
 @click.option('--nprocs', default=15)
-@click.option('--compression', default=H5CompressionFilter.LZF)
+@click.option('--compression', default=H5CompressionFilter.BLOSC_ZSTANDARD)
 def main(brdf_dir, outdir, tile, band, year_from, filter_size, nprocs, compression):
     write_brdf_fallback_band(brdf_dir, tile, band, outdir, filter_size, year_from=year_from, nprocs=nprocs,
                              compression=compression)

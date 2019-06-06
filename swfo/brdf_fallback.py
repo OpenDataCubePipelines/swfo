@@ -37,6 +37,7 @@ TILES = ['h29v10', 'h30v10', 'h31v10', 'h32v10', 'h27v11', 'h28v11', 'h29v11', '
 
 LOCKS = {}
 
+
 @contextmanager
 def timing(task_name):
     start_time = time.time()
@@ -138,8 +139,8 @@ def hdf5_files(brdf_dir, tile, year_from=None, year_to=None):
     for item in os.listdir(brdf_dir):
         if year_from is not None and folder_year(item) < year_from:
             continue
-        elif year_to is not None and folder_year(item) > year_to: 
-            continue 
+        elif year_to is not None and folder_year(item) > year_to:
+            continue
 
         files = os.listdir(pjoin(brdf_dir, item))
         try:
@@ -713,13 +714,13 @@ def write_brdf_fallback_band(brdf_dir, tile, band, outdir, filter_size,
 @click.option('--tile', default='h29v12')
 @click.option('--band', default='Band1')
 @click.option('--year-from', default=2017)
-@click.option('--year-to', default= 2018)
+@click.option('--year-to', default=2018)
 @click.option('--filter-size', default=22)
 @click.option('--nprocs', default=15)
 @click.option('--compression', default=H5CompressionFilter.BLOSC_ZSTANDARD)
 def main(brdf_dir, outdir, tile, band, year_from, year_to, filter_size, nprocs, compression):
-    write_brdf_fallback_band(brdf_dir, tile, band, outdir, filter_size, year_from=year_from, year_to=year_to, nprocs=nprocs,
-                             compression=compression)
+    write_brdf_fallback_band(brdf_dir, tile, band, outdir, filter_size, year_from=year_from,
+                             year_to=year_to, nprocs=nprocs, compression=compression)
 
 
 if __name__ == "__main__":

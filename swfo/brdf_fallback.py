@@ -37,6 +37,7 @@ TILES = ['h29v10', 'h30v10', 'h31v10', 'h32v10', 'h27v11', 'h28v11', 'h29v11', '
 
 LOCKS = {}
 
+
 @contextmanager
 def timing(task_name):
     start_time = time.time()
@@ -138,8 +139,8 @@ def hdf5_files(brdf_dir, tile, year_from=None, year_to=None):
     for item in os.listdir(brdf_dir):
         if year_from is not None and folder_year(item) < year_from:
             continue
-        elif year_to is not None and folder_year(item) > year_to: 
-            continue 
+        elif year_to is not None and folder_year(item) > year_to:
+            continue
 
         files = os.listdir(pjoin(brdf_dir, item))
         try:
@@ -325,16 +326,17 @@ def get_std_block(h5_info, band_name, index, window):
             dat = read_brdf_dataset(fid[band_name], window)
             return dat
 
-    data = np.array([__get_data(filename, (index,) + window) for filename in h5_info.values()])
+    data = np.zeros((len(h5_info),) + shape_of_window(window), dtype='float32')
+    for layer, filename in enumerate(h5_info.values()):
+        data[layer] = __get_data(filename, (index,) + window)
+
     run_median = np.nanmedian(data, axis=0, keepdims=False)
 
-    median_filled_data = []
-    for item in data:
-        idx = np.where(np.isnan(item))
-        item[idx] = run_median[idx]
-        median_filled_data.append(item)
+    for item in range(data.shape[0]):
+        idx = np.where(np.isnan(data[item]))
+        data[item][idx] = run_median[idx]
 
-    return np.nanstd(np.array(median_filled_data), axis=0, ddof=1, keepdims=False)
+    return np.nanstd(data, axis=0, ddof=1, keepdims=False)
 
 
 def calculate_thresholds(h5_info, band_name, shape, compute_chunks, nprocs=None):
@@ -470,7 +472,13 @@ def temporal_average(data, doy):
     return {doy: tmp}
 
 
-def apply_threshold(h5_info, band_name, window, filter_size, thresholds, bad_indices):
+def shape_of_window(window):
+    y_shape = window[0].stop - window[0].start
+    x_shape = window[1].stop - window[1].start
+    return (y_shape, x_shape)
+
+
+def apply_threshold(clean_data_file, h5_info, band_name, window, filter_size, thresholds, bad_indices):
     """
     This function applies median filter on the dataset, median filter with size of
     (2 * filter_size + 1) is applied as a running median filter with time steps centered
@@ -487,12 +495,6 @@ def apply_threshold(h5_info, band_name, window, filter_size, thresholds, bad_ind
     def get_albedo_data(filename, window):
         with h5py.File(filename, 'r') as fid:
             return read_brdf_dataset(fid[band_name], window)
-
-    result = {}
-    for key in all_data_keys:
-        y_shape = window[0].stop - window[0].start
-        x_shape = window[1].stop - window[1].start
-        result[key] = np.full(shape=(3, y_shape, x_shape), fill_value=32767, dtype=np.int16)
 
     # dictionary mapping date to data
     data_dict = {}
@@ -546,9 +548,9 @@ def apply_threshold(h5_info, band_name, window, filter_size, thresholds, bad_ind
             clean_data = clean_data * 1000
             clean_data = clean_data.filled(fill_value=32767).astype(np.int16)
 
-            result[key][param_index, :, :] = clean_data
-
-    return (window, result)
+            with LOCKS[clean_data_file]:
+                with h5py.File(clean_data_file) as output:
+                    output[key][(param_index,) + window] = clean_data
 
 
 def apply_convolution(filename, h5_info, window, filter_size, mask_indices):
@@ -575,7 +577,9 @@ def apply_convolution(filename, h5_info, window, filter_size, mask_indices):
         temp = {}
 
         # get clean dataset for all available dates for given window
-        data_clean = np.array([__get_clean_data(filename, key, (param_index,) + window) for key in all_data_keys])
+        data_clean = np.full(shape=(len(all_data_keys),) + shape_of_window(window), fill_value=np.nan, dtype='float32')
+        for layer, key in enumerate(all_data_keys):
+            data_clean[layer] = __get_clean_data(filename, key, (param_index,) + window)
 
         # set data that needs to be padded at the end and front to perform convolution
         data_head = np.array([data_clean[0] for i in range(filter_size)])
@@ -594,6 +598,7 @@ def apply_convolution(filename, h5_info, window, filter_size, mask_indices):
             data_padded[index, :, :] = np.where(invalid_data[index, :, :], median_data, data_padded[index, :, :])
 
         # convert data to floating point with hard coded scale factor of 0.001
+        # TODO is this correct?
         data_padded = data_padded * 0.001
 
         # perform convolution using Gaussian filter defined above
@@ -636,8 +641,6 @@ def write_brdf_fallback_band(brdf_dir, tile, band, outdir, filter_size,
 
     with timing('calculate thresholds'):
         h5_info = hdf5_files(brdf_dir, tile=tile, year_from=year_from, year_to=year_to)
-        print(h5_info)
-        exit()
         min_numpix_required = np.rint((pthresh / 100.0) * len(h5_info))
 
         # get counts of good pixel quality
@@ -652,28 +655,29 @@ def write_brdf_fallback_band(brdf_dir, tile, band, outdir, filter_size,
 
         thresholds = calculate_thresholds(h5_info, albedo_band_name(band), shape, compute_chunks, nprocs=nprocs)
 
-    with tempfile.TemporaryDirectory() as tmp_dir:
-        # TODO outdir -> tmp_dir
-        clean_data_file = pjoin(outdir, 'clean_data_{}_{}.h5'.format(band, tile))
+    quality_count = None
 
-        with h5py.File(clean_data_file, 'w') as clean_data, timing('apply threshold'):
-            for key in h5_info:
-                create_dataset(clean_data, key, (3, shape[0], shape[1]), {})
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        with timing('apply threshold'):
+            # TODO outdir -> tmp_dir
+            clean_data_file = pjoin(outdir, 'clean_data_{}_{}.h5'.format(band, tile))
+            LOCKS[clean_data_file] = Lock()
+
+            with h5py.File(clean_data_file, 'w') as clean_data:
+                for key in h5_info:
+                    create_dataset(clean_data, key, (3, shape[0], shape[1]), {})
 
             args = []
             for x, y in generate_tiles(shape[0], shape[1], compute_chunks[0], compute_chunks[1]):
                 window = (slice(*y), slice(*x))
-                args.append([h5_info, albedo_band_name(band), window, filter_size, thresholds, bad_indices[window]])
+                args.append([clean_data_file, h5_info, albedo_band_name(band),
+                             window, filter_size, thresholds, bad_indices[window]])
 
             if nprocs:
                 with ProcessPool(processes=nprocs) as pool:
-                    clean_data_shards = pool.starmap(apply_threshold, args)
+                    pool.starmap(apply_threshold, args)
             else:
-                clean_data_shards = [apply_threshold(*arg) for arg in args]
-
-            for window, entry in clean_data_shards:
-                for key, value in entry.items():
-                    clean_data[key][(slice(None),) + window] = value
+                _ = [apply_threshold(*arg) for arg in args]
 
         with timing('post cleanup'):
             set_doys = sorted(set(folder_doy(item) for item in h5_info))
@@ -713,13 +717,13 @@ def write_brdf_fallback_band(brdf_dir, tile, band, outdir, filter_size,
 @click.option('--tile', default='h29v12')
 @click.option('--band', default='Band1')
 @click.option('--year-from', default=2017)
-@click.option('--year-to', default= 2018)
+@click.option('--year-to', default=2018)
 @click.option('--filter-size', default=22)
 @click.option('--nprocs', default=15)
 @click.option('--compression', default=H5CompressionFilter.BLOSC_ZSTANDARD)
 def main(brdf_dir, outdir, tile, band, year_from, year_to, filter_size, nprocs, compression):
-    write_brdf_fallback_band(brdf_dir, tile, band, outdir, filter_size, year_from=year_from, year_to=year_to, nprocs=nprocs,
-                             compression=compression)
+    write_brdf_fallback_band(brdf_dir, tile, band, outdir, filter_size, year_from=year_from,
+                             year_to=year_to, nprocs=nprocs, compression=compression)
 
 
 if __name__ == "__main__":

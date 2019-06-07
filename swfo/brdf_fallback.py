@@ -599,7 +599,7 @@ def apply_convolution(filename, h5_info, window, filter_size, mask_indices):
 
         # perform convolution using Gaussian filter defined above
         data_conv = np.apply_along_axis(lambda m: np.ma.convolve(m, filt, mode='same'), axis=0, arr=data_clean)
-        data_conv = np.ma.masked_invalid(data_conv[filter_size:len(data_clean)+filter_size])
+        data_conv = np.ma.masked_invalid(data_conv[filter_size:len(all_data_keys)+filter_size])
 
         for index, key in enumerate(all_data_keys):
             temp[key] = data_conv[index]

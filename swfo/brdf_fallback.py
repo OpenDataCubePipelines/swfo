@@ -37,6 +37,15 @@ TILES = ['h29v10', 'h30v10', 'h31v10', 'h32v10', 'h27v11', 'h28v11', 'h29v11', '
 
 LOCKS = {}
 
+NODATA = 32767
+
+SCALE_FACTOR = 0.0001
+INV_SCALE_FACTOR = 10000
+
+# for clean data interim file
+SCALE_FACTOR_2 = 0.001
+INV_SCALE_FACTOR_2 = 1000
+
 
 @contextmanager
 def timing(task_name):
@@ -96,6 +105,12 @@ def folder_year(folder):
         A 'int' type: A year that folder corresponds to.
     """
     return folder_datetime(folder).timetuple().tm_year
+
+
+def shape_of_window(window):
+    y_shape = window[0].stop - window[0].start
+    x_shape = window[1].stop - window[1].start
+    return (y_shape, x_shape)
 
 
 def gauss_filter(filter_size):
@@ -339,6 +354,26 @@ def get_std_block(h5_info, band_name, index, window):
     return np.nanstd(data, axis=0, ddof=1, keepdims=False)
 
 
+def generate_windows(shape, compute_chunks):
+    for x, y in generate_tiles(shape[0], shape[1], compute_chunks[0], compute_chunks[1]):
+        yield (slice(*y), slice(*x))
+
+
+class DummyPool:
+    def __enter__(self):
+        return self
+
+    def starmap(self, func, args):
+        return [func(*arg) for arg in args]
+
+
+def Pool(processes):
+    if not processes:
+        return DummyPool()
+
+    return ProcessPool(processes=processes)
+
+
 def calculate_thresholds(h5_info, band_name, shape, compute_chunks, nprocs=None):
     """
     Computes threshold needed needed to clean temporal series
@@ -346,15 +381,11 @@ def calculate_thresholds(h5_info, band_name, shape, compute_chunks, nprocs=None)
     thresh_dict = {}
     for index, param in enumerate(BrdfModelParameters):
         args = []
-        for x, y in generate_tiles(shape[0], shape[1], compute_chunks[0], compute_chunks[1]):
-            window = (slice(*y), slice(*x))
+        for window in generate_windows(shape, compute_chunks):
             args.append([h5_info, band_name, index, window])
 
-        if nprocs:
-            with ProcessPool(processes=nprocs) as pool:
-                results = pool.starmap(get_std_block, args)
-        else:
-            results = [get_std_block(*arg) for arg in args]
+        with Pool(nprocs) as pool:
+            results = pool.starmap(get_std_block, args)
 
         thresh_dict[param] = np.nanmean(results)
 
@@ -384,8 +415,8 @@ def create_brdf_datasets(group, band_name, shape, common_attrs,
                          chunks=(1, 240, 240), filter_opts=None,
                          compression=H5CompressionFilter.BLOSC_ZSTANDARD):
 
-    attrs = dict(scale_factor=0.0001, add_offset=0,
-                 _FillValue=32767, bands="{}: 1, {}: 2:, {}: 3".format(BrdfModelParameters.ISO.value,
+    attrs = dict(scale_factor=SCALE_FACTOR, add_offset=0,
+                 _FillValue=NODATA, bands="{}: 1, {}: 2:, {}: 3".format(BrdfModelParameters.ISO.value,
                                                                        BrdfModelParameters.VOL.value,
                                                                        BrdfModelParameters.GEO.value),
                  description=('BRDF albedo parameters (iso, vol and geo)'
@@ -396,8 +427,8 @@ def create_brdf_datasets(group, band_name, shape, common_attrs,
                    (3,) + shape, attrs,
                    chunks=chunks, filter_opts=filter_opts, compression=compression)
 
-    attrs = dict(scale_factor=0.0001, add_offset=0,
-                 _FillValue=32767, bands="afx: 1, rms: 2",
+    attrs = dict(scale_factor=SCALE_FACTOR, add_offset=0,
+                 _FillValue=NODATA, bands="afx: 1, rms: 2",
                  description=('BRDF shape indices (afx and rms)'
                               ' generated to support future validation work'),
                  **common_attrs)
@@ -430,13 +461,13 @@ def write_chunk(data_dict, fid, band_name, window):
     data_support = np.ma.array([data_dict[key]['afx'], data_dict[key]['rms']])
     data_quality = np.array([data_dict[key]['mask'], data_dict[key]['num']])
 
-    data_main = data_main * 10000
-    data_main = np.rint(data_main).filled(fill_value=32767).astype(np.int16)
+    data_main = data_main * INV_SCALE_FACTOR
+    data_main = np.rint(data_main).filled(fill_value=NODATA).astype(np.int16)
 
     fid['BRDF_Albedo_Parameters_{}'.format(band_name)][window] = data_main
 
-    data_support = data_support * 10000
-    data_support = np.rint(data_support).filled(fill_value=32767).astype(np.int16)
+    data_support = data_support * INV_SCALE_FACTOR
+    data_support = np.rint(data_support).filled(fill_value=NODATA).astype(np.int16)
     fid['BRDF_Albedo_Shape_Indices_{}'.format(band_name)][window] = data_support
 
     data_quality = data_quality.astype(np.int16)
@@ -472,12 +503,6 @@ def temporal_average(data, doy):
     return {doy: tmp}
 
 
-def shape_of_window(window):
-    y_shape = window[0].stop - window[0].start
-    x_shape = window[1].stop - window[1].start
-    return (y_shape, x_shape)
-
-@profile 
 def apply_threshold(clean_data_file, h5_info, band_name, window, filter_size, thresholds, bad_indices):
     """
     This function applies median filter on the dataset, median filter with size of
@@ -545,8 +570,8 @@ def apply_threshold(clean_data_file, h5_info, band_name, window, filter_size, th
             clean_data[threshold_idx] = local_median[threshold_idx]
 
             # convert to int16
-            clean_data = clean_data * 1000
-            clean_data = clean_data.filled(fill_value=32767).astype(np.int16)
+            clean_data = clean_data * INV_SCALE_FACTOR_2
+            clean_data = clean_data.filled(fill_value=NODATA).astype(np.int16)
 
             with LOCKS[clean_data_file]:
                 with h5py.File(clean_data_file) as output:
@@ -586,7 +611,7 @@ def apply_convolution(filename, h5_info, window, filter_size, mask_indices):
         data_clean[len(all_data_keys) + filter_size:] = np.array([data_clean[filter_size + len(all_data_keys) - 1] for i in range(filter_size)])
 
         # mask where data are invalid
-        invalid_data = data_clean == 32767.0
+        invalid_data = data_clean == NODATA
         data_clean = np.where(~invalid_data, data_clean, np.nan)
 
         # get mean across temporal axis to fill the np.nan in data_clean array
@@ -594,8 +619,7 @@ def apply_convolution(filename, h5_info, window, filter_size, mask_indices):
         for index in range(data_clean.shape[0]):
             data_clean[index] = np.where(invalid_data[index], median_data, data_clean[index])
 
-        # convert data to floating point with hard coded scale factor of 0.001
-        data_clean = data_clean * 0.001
+        data_clean = data_clean * SCALE_FACTOR_2
 
         # perform convolution using Gaussian filter defined above
         data_conv = np.apply_along_axis(lambda m: np.ma.convolve(m, filt, mode='same'), axis=0, arr=data_clean)
@@ -664,16 +688,12 @@ def write_brdf_fallback_band(brdf_dir, tile, band, outdir, filter_size,
                     create_dataset(clean_data, key, (3, shape[0], shape[1]), {})
 
             args = []
-            for x, y in generate_tiles(shape[0], shape[1], compute_chunks[0], compute_chunks[1]):
-                window = (slice(*y), slice(*x))
+            for window in generate_windows(shape, compute_chunks):
                 args.append([clean_data_file, h5_info, albedo_band_name(band),
                              window, filter_size, thresholds, bad_indices[window]])
 
-            if nprocs:
-                with ProcessPool(processes=nprocs) as pool:
-                    pool.starmap(apply_threshold, args)
-            else:
-                _ = [apply_threshold(*arg) for arg in args]
+            with Pool(processes=nprocs) as pool:
+                pool.starmap(apply_threshold, args)
 
         with timing('post cleanup'):
             set_doys = sorted(set(folder_doy(item) for item in h5_info))
@@ -694,17 +714,12 @@ def write_brdf_fallback_band(brdf_dir, tile, band, outdir, filter_size,
                     create_brdf_datasets(fid, band, shape, attrs, chunks=data_chunks, compression=compression)
 
             args = []
-            for x, y in generate_tiles(shape[0], shape[1], compute_chunks[0], compute_chunks[1]):
-                window = (slice(*y), slice(*x))
-
+            for window in generate_windows(shape, compute_chunks):
                 args.append([window, set_doys, h5_info, outdir, tile,
                              clean_data_file, filter_size, band, bad_indices])
 
-            if nprocs:
-                with ProcessPool(processes=nprocs) as pool:
-                    pool.starmap(post_cleanup_process, args)
-            else:
-                _ = [post_cleanup_process(*arg) for arg in args]
+            with Pool(processes=nprocs) as pool:
+                pool.starmap(post_cleanup_process, args)
 
 
 @click.command()

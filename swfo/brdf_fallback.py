@@ -329,7 +329,7 @@ def brdf_indices_quality_check(avg_data=None):
 
     return filtered_data
 
-@profile 
+
 def get_std_block(h5_info, band_name, index, window):
     """
     A function to compute a standard deviation for across a temporal axis.
@@ -380,12 +380,10 @@ def calculate_thresholds(h5_info, band_name, shape, compute_chunks, nprocs=None)
     """
     thresh_dict = {}
     for index, param in enumerate(BrdfModelParameters):
-        args = []
-        for window in generate_windows(shape, compute_chunks):
-            args.append([h5_info, band_name, index, window])
-
         with Pool(nprocs) as pool:
-            results = pool.starmap(get_std_block, args)
+            results = pool.starmap(get_std_block,
+                                   [(h5_info, band_name, index, window)
+                                    for window in generate_windows(shape, compute_chunks)])
 
         thresh_dict[param] = np.nanmean(results)
 
@@ -417,8 +415,8 @@ def create_brdf_datasets(group, band_name, shape, common_attrs,
 
     attrs = dict(scale_factor=SCALE_FACTOR, add_offset=0,
                  _FillValue=NODATA, bands="{}: 1, {}: 2:, {}: 3".format(BrdfModelParameters.ISO.value,
-                                                                       BrdfModelParameters.VOL.value,
-                                                                       BrdfModelParameters.GEO.value),
+                                                                        BrdfModelParameters.VOL.value,
+                                                                        BrdfModelParameters.GEO.value),
                  description=('BRDF albedo parameters (iso, vol and geo)'
                               ' derived from {}'
                               ' in lognormal space'.format(albedo_band_name(band_name))),
@@ -577,7 +575,7 @@ def apply_threshold(clean_data_file, h5_info, band_name, window, filter_size, th
                 with h5py.File(clean_data_file) as output:
                     output[key][(param_index,) + window] = clean_data
 
-@profile 
+
 def apply_convolution(filename, h5_info, window, filter_size, mask_indices):
     """
     This function applies convolution on the clean dataset from applied threshold
@@ -602,13 +600,15 @@ def apply_convolution(filename, h5_info, window, filter_size, mask_indices):
         temp = {}
 
         # get clean dataset for all available dates for given window
-        data_clean = np.full(shape=(2 * filter_size + len(all_data_keys),) + shape_of_window(window), fill_value=np.nan, dtype='float32')
+        data_clean = np.full(shape=(2 * filter_size + len(all_data_keys),) + shape_of_window(window),
+                             fill_value=np.nan, dtype='float32')
         for layer, key in enumerate(all_data_keys):
             data_clean[filter_size + layer] = __get_clean_data(filename, key, (param_index,) + window)
 
         # set data that needs to be padded at the end and front to perform convolution
         data_clean[:filter_size] = np.array([data_clean[filter_size] for i in range(filter_size)])
-        data_clean[len(all_data_keys) + filter_size:] = np.array([data_clean[filter_size + len(all_data_keys) - 1] for i in range(filter_size)])
+        data_clean[len(all_data_keys) + filter_size:] = np.array([data_clean[filter_size + len(all_data_keys) - 1]
+                                                                  for i in range(filter_size)])
 
         # mask where data are invalid
         invalid_data = data_clean == NODATA
@@ -687,13 +687,11 @@ def write_brdf_fallback_band(brdf_dir, tile, band, outdir, filter_size,
                 for key in h5_info:
                     create_dataset(clean_data, key, (3, shape[0], shape[1]), {})
 
-            args = []
-            for window in generate_windows(shape, compute_chunks):
-                args.append([clean_data_file, h5_info, albedo_band_name(band),
-                             window, filter_size, thresholds, bad_indices[window]])
-
             with Pool(processes=nprocs) as pool:
-                pool.starmap(apply_threshold, args)
+                pool.starmap(apply_threshold,
+                             [(clean_data_file, h5_info, albedo_band_name(band),
+                               window, filter_size, thresholds, bad_indices[window])
+                              for window in generate_windows(shape, compute_chunks)])
 
         with timing('post cleanup'):
             set_doys = sorted(set(folder_doy(item) for item in h5_info))
@@ -713,13 +711,11 @@ def write_brdf_fallback_band(brdf_dir, tile, band, outdir, filter_size,
                 with h5py.File(outfile, 'w') as fid:
                     create_brdf_datasets(fid, band, shape, attrs, chunks=data_chunks, compression=compression)
 
-            args = []
-            for window in generate_windows(shape, compute_chunks):
-                args.append([window, set_doys, h5_info, outdir, tile,
-                             clean_data_file, filter_size, band, bad_indices])
-
             with Pool(processes=nprocs) as pool:
-                pool.starmap(post_cleanup_process, args)
+                pool.starmap(post_cleanup_process,
+                             [(window, set_doys, h5_info, outdir, tile,
+                               clean_data_file, filter_size, band, bad_indices)
+                              for window in generate_windows(shape, compute_chunks)])
 
 
 @click.command()

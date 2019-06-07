@@ -314,7 +314,7 @@ def brdf_indices_quality_check(avg_data=None):
 
     return filtered_data
 
-
+@profile 
 def get_std_block(h5_info, band_name, index, window):
     """
     A function to compute a standard deviation for across a temporal axis.
@@ -477,7 +477,7 @@ def shape_of_window(window):
     x_shape = window[1].stop - window[1].start
     return (y_shape, x_shape)
 
-
+@profile 
 def apply_threshold(clean_data_file, h5_info, band_name, window, filter_size, thresholds, bad_indices):
     """
     This function applies median filter on the dataset, median filter with size of
@@ -552,7 +552,7 @@ def apply_threshold(clean_data_file, h5_info, band_name, window, filter_size, th
                 with h5py.File(clean_data_file) as output:
                     output[key][(param_index,) + window] = clean_data
 
-
+@profile 
 def apply_convolution(filename, h5_info, window, filter_size, mask_indices):
     """
     This function applies convolution on the clean dataset from applied threshold
@@ -577,32 +577,28 @@ def apply_convolution(filename, h5_info, window, filter_size, mask_indices):
         temp = {}
 
         # get clean dataset for all available dates for given window
-        data_clean = np.full(shape=(len(all_data_keys),) + shape_of_window(window), fill_value=np.nan, dtype='float32')
+        data_clean = np.full(shape=(2 * filter_size + len(all_data_keys),) + shape_of_window(window), fill_value=np.nan, dtype='float32')
         for layer, key in enumerate(all_data_keys):
-            data_clean[layer] = __get_clean_data(filename, key, (param_index,) + window)
+            data_clean[filter_size + layer] = __get_clean_data(filename, key, (param_index,) + window)
 
         # set data that needs to be padded at the end and front to perform convolution
-        data_head = np.array([data_clean[0] for i in range(filter_size)])
-        data_tail = np.array([data_clean[len(data_clean)-1] for i in range(filter_size)])
-
-        # pad the data_head and tail
-        data_padded = np.concatenate((data_head, data_clean, data_tail), axis=0)
+        data_clean[:filter_size] = np.array([data_clean[filter_size] for i in range(filter_size)])
+        data_clean[len(all_data_keys) + filter_size:] = np.array([data_clean[filter_size + len(all_data_keys) - 1] for i in range(filter_size)])
 
         # mask where data are invalid
-        invalid_data = data_padded == 32767.0
-        data_padded = np.where(~invalid_data, data_padded, np.nan)
+        invalid_data = data_clean == 32767.0
+        data_clean = np.where(~invalid_data, data_clean, np.nan)
 
-        # get mean across temporal axis to fill the np.nan in data_padded array
-        median_data = np.nanmedian(data_padded, axis=0)
-        for index in range(data_padded.shape[0]):
-            data_padded[index, :, :] = np.where(invalid_data[index, :, :], median_data, data_padded[index, :, :])
+        # get mean across temporal axis to fill the np.nan in data_clean array
+        median_data = np.nanmedian(data_clean, axis=0)
+        for index in range(data_clean.shape[0]):
+            data_clean[index] = np.where(invalid_data[index], median_data, data_clean[index])
 
         # convert data to floating point with hard coded scale factor of 0.001
-        # TODO is this correct?
-        data_padded = data_padded * 0.001
+        data_clean = data_clean * 0.001
 
         # perform convolution using Gaussian filter defined above
-        data_conv = np.apply_along_axis(lambda m: np.ma.convolve(m, filt, mode='same'), axis=0, arr=data_padded)
+        data_conv = np.apply_along_axis(lambda m: np.ma.convolve(m, filt, mode='same'), axis=0, arr=data_clean)
         data_conv = np.ma.masked_invalid(data_conv[filter_size:len(data_clean)+filter_size])
 
         for index, key in enumerate(all_data_keys):
@@ -637,7 +633,7 @@ def post_cleanup_process(window, set_doys, h5_info, outdir, tile, clean_data_fil
 
 def write_brdf_fallback_band(brdf_dir, tile, band, outdir, filter_size,
                              pthresh=10.0, year_from=None, year_to=None, data_chunks=(1, 240, 240),
-                             compute_chunks=(100, 2400), nprocs=None, compression=H5CompressionFilter.BLOSC_ZSTANDARD):
+                             compute_chunks=(240, 240), nprocs=None, compression=H5CompressionFilter.BLOSC_ZSTANDARD):
 
     with timing('calculate thresholds'):
         h5_info = hdf5_files(brdf_dir, tile=tile, year_from=year_from, year_to=year_to)
@@ -713,12 +709,12 @@ def write_brdf_fallback_band(brdf_dir, tile, band, outdir, filter_size,
 
 @click.command()
 @click.option('--brdf-dir', default='/g/data/v10/eoancillarydata.reS/brdf.ia/MCD43A1.006/')
-@click.option('--outdir', default='/g/data/u46/users/pd1813/BRDF_PARAM/test_v9')
+@click.option('--outdir', default='/g/data/u46/users/pd1813/BRDF_PARAM/test_v22')
 @click.option('--tile', default='h29v12')
 @click.option('--band', default='Band1')
 @click.option('--year-from', default=2017)
 @click.option('--year-to', default=2018)
-@click.option('--filter-size', default=22)
+@click.option('--filter-size', default=4)
 @click.option('--nprocs', default=15)
 @click.option('--compression', default=H5CompressionFilter.BLOSC_ZSTANDARD)
 def main(brdf_dir, outdir, tile, band, year_from, year_to, filter_size, nprocs, compression):

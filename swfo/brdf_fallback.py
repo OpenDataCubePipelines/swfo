@@ -200,22 +200,10 @@ def read_brdf_dataset(ds, window=None):
     return scale_factor * (data - add_offset)
 
 
-def get_qualityband_count(h5_info, band_name):
-    """
-    This function computes and returns the number of valid pixels
-    in a time series stack.
-    :param h5_info:
-        A 'dict' type: A nested dict containing  dates and BRDF file path
-        which can be accessed through a key param defined by a folder name.
-    :param band_name:
-        A 'str' type: A name of quality band.
-    :return:
-        A numpy array with total quality band counts across all the datasets
-        in h5_info.
-    """
+def get_qualityband_count_window(h5_info, band_name, window):
     def read_quality_data(filename):
         with h5py.File(filename, 'r') as fid:
-            return 1. - read_brdf_dataset(fid[band_name])
+            return 1. - read_brdf_dataset(fid[band_name], window)
 
     first, *rest = list(h5_info)
 
@@ -229,6 +217,32 @@ def get_qualityband_count(h5_info, band_name):
         data_sum = np.where(data_sum_nan & new_data_nan,
                             np.nan,
                             np.where(data_sum_nan, 0., data_sum) + np.where(new_data_nan, 0., new_data))
+
+    return (window, data_sum)
+
+
+def get_qualityband_count(h5_info, band_name, shape, compute_chunks, nprocs):
+    """
+    This function computes and returns the number of valid pixels
+    in a time series stack.
+    :param h5_info:
+        A 'dict' type: A nested dict containing  dates and BRDF file path
+        which can be accessed through a key param defined by a folder name.
+    :param band_name:
+        A 'str' type: A name of quality band.
+    :return:
+        A numpy array with total quality band counts across all the datasets
+        in h5_info.
+    """
+    data_sum = np.zeros(shape=shape, dtype='int16')
+
+    with Pool(processes=nprocs) as pool:
+        results = pool.starmap(get_qualityband_count_window,
+                               [(h5_info, band_name, window)
+                                for window in generate_windows(shape, compute_chunks)])
+
+    for window, data in results:
+        data_sum[window] = data
 
     return data_sum
 
@@ -663,15 +677,16 @@ def write_brdf_fallback_band(brdf_dir, tile, band, outdir, filter_size,
         h5_info = hdf5_files(brdf_dir, tile=tile, year_from=year_from, year_to=year_to)
         min_numpix_required = np.rint((pthresh / 100.0) * len(h5_info))
 
+        shape, attrs = get_band_info(h5_info, albedo_band_name(band))
+        shape = shape[-2:]
+
         # get counts of good pixel quality
-        quality_count = get_qualityband_count(h5_info=h5_info, band_name=quality_band_name(band))
+        quality_count = get_qualityband_count(h5_info=h5_info, band_name=quality_band_name(band),
+                                              shape=shape, compute_chunks=compute_chunks, nprocs=nprocs)
         quality_count = np.ma.masked_invalid(quality_count)
 
         # get the index where band_quality number is less the minimum number of valid pixels required
         bad_indices = (quality_count < min_numpix_required).filled(False)
-
-        shape, attrs = get_band_info(h5_info, albedo_band_name(band))
-        shape = shape[-2:]
 
         thresholds = calculate_thresholds(h5_info, albedo_band_name(band), shape, compute_chunks, nprocs=nprocs)
 

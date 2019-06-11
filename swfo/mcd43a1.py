@@ -15,10 +15,29 @@ import h5py
 from wagl.hdf5 import write_h5_image, attach_attributes, attach_image_attributes
 from wagl.hdf5.compression import H5CompressionFilter
 from wagl.tiling import generate_tiles
+from wagl.constants import BrdfModelParameters
 
+
+OUT_DTYPE = numpy.dtype([
+    (BrdfModelParameters.ISO.value, 'int16'),
+    (BrdfModelParameters.VOL.value, 'int16'),
+    (BrdfModelParameters.GEO.value, 'int16')
+])
 
 RASTERIO_PREFIX = 'tar:{}!'
 GDAL_PREFIX = '/vsitar/{}'
+
+def _brdf_netcdf_band_orderer(band_name: str):
+    """
+    sort key to return band names in set ordering;
+        * Albedo band parameters layers
+        * Quality layers
+
+
+    :param band_name:
+        netcdf4 subdataset name
+    """
+    return band_name.split('_')[-2:]
 
 
 def convert_tile(fname, out_h5: h5py.Group, compression, filter_opts):
@@ -68,7 +87,7 @@ def convert_tile(fname, out_h5: h5py.Group, compression, filter_opts):
         attach_attributes(out_h5, global_attrs)
 
         # find and convert every subsdataset (sds)
-        for sds_name in ds.variables:
+        for sds_name in sorted(ds.variables, key=_brdf_netcdf_band_orderer):
             sds = ds.variables[sds_name]
 
             # create empty or copy the user supplied filter options
@@ -77,16 +96,13 @@ def convert_tile(fname, out_h5: h5py.Group, compression, filter_opts):
             else:
                 f_opts = filter_opts.copy()
 
-            # use sds native chunks if none are provided
+            # Recreate datasets as 2-dimensional dataset
+            dim1, dim2, *_ = sds.shape
             if 'chunks' not in f_opts:
-                f_opts['chunks'] = sds.chunking()
-
-            # modify to have 3D chunks if we have a multiband sds
-            if len(sds.shape) == 3 and len(f_opts['chunks']) == 2:
-                f_opts['chunks'].append(1)
-                f_opts['chunks'] = tuple(f_opts['chunks'])
+                assert dim1 == 2400 and dim2 == 2400
+                f_opts['chunks'] = (240, 240)
             else:
-                f_opts['chunks'] = tuple(f_opts['chunks'])
+                f_opts['chunks'] = (f_opts[0], f_opts[1])
 
             # subdataset attributes and spatial attributes
             attrs = {key: sds.getncattr(key) for key in sds.ncattrs()}
@@ -94,12 +110,13 @@ def convert_tile(fname, out_h5: h5py.Group, compression, filter_opts):
             # attrs['crs_wkt'] = sds.crs.wkt
             attrs.update(geospatial[sds_name])
 
-            data = sds[:]
-            if len(data.shape) == 3:
-                # the band dimension is the last one, but we want it to be the first
-                assert data.shape[-1] == 3
-                data = numpy.transpose(data, (2, 0, 1))
-                f_opts['chunks'] = (f_opts['chunks'][2], f_opts['chunks'][0], f_opts['chunks'][1])
+            in_arr = sds[:]
+            if len(in_arr.shape) == 3:
+                data = numpy.ndarray(shape=(dim1, dim2), dtype=OUT_DTYPE)
+                for idx, band_name in enumerate(OUT_DTYPE.names):
+                    data[band_name] = in_arr[:, :, idx]
+            else:
+                data = in_arr
 
             # write to disk as an IMAGE Class Dataset
             write_h5_image(data, sds_name, out_h5, attrs=attrs,

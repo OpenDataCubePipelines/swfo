@@ -204,10 +204,16 @@ def mcd43a1_tile_with_md(fname, outdir, md_file, compression, filter_opts):
 
     # rewrite file paths:
     for band in md['measurements']:
-        md['measurements'][band]['layer'] = '//{}'.format(
+        md['measurements'][band]['layer'] = '/{}'.format(
             md['measurements'][band]['layer'].split(':')[-1]
         )
         md['measurements'][band]['path'] = ''
+
+        if 'band' in md['measurements'][band]:
+            md['measurements'][band]['band'] = \
+                mcd43a1.OUT_DTYPE.names[
+                    int(md['measurements'][band]['band']) - 1
+                ]
 
     md['properties']['item:providers'].append({
         'name': 'GeoscienceAustralia',
@@ -217,7 +223,7 @@ def mcd43a1_tile_with_md(fname, outdir, md_file, compression, filter_opts):
     with atomic_h5_write(out_fname, 'w') as out_h5:
         mcd43a1.convert_tile(str(infile), out_h5, compression,
                              filter_opts)
-        write_h5_md(out_h5, md)
+        write_h5_md(out_h5, [md], ['/'])
 
 
 @mcd43a1_cli.command('vrt', help='Build VRT mosaic of each for each MCD43A1 HDF4 subdataset.')

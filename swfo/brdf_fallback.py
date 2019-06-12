@@ -714,7 +714,7 @@ def write_brdf_fallback_band(h5_info, tile, band, outdir, filter_size, set_doys,
                      [(clean_data_file, h5_info, albedo_band_name(band),
                        window, filter_size, thresholds, bad_indices[window])
                       for window in generate_windows(shape,
-                                                     compute_chunks=tuple(5 * x for x in compute_chunks))])
+                                                     compute_chunks=compute_chunks)])
 
     clean_data_file = pjoin(outdir, 'clean_data_{}_{}.h5'.format(band, tile))
     for doy in set_doys:

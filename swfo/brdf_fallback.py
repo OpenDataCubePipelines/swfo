@@ -515,8 +515,8 @@ def temporal_average(data, doy):
     """
     tmp = {}
     for param in BrdfModelParameters:
-        data_param = np.ma.array([data[param][key] for key in data[param].keys() if folder_doy(key) == doy])
-
+        data_param = np.array([data[param][key] for key in data[param].keys() if folder_doy(key) == doy])
+        data_param = np.ma.masked_invalid(data_param)
         tmp[param] = dict(mean=np.ma.mean(data_param, axis=0),
                           std=np.ma.std(data_param, ddof=0, axis=0),
                           num=data_param.count(axis=0))
@@ -642,11 +642,13 @@ def apply_convolution(filename, h5_info, window, filter_size, mask_indices):
         for index in range(data_clean.shape[0]):
             data_clean[index] = np.where(invalid_data[index], median_data, data_clean[index])
 
-        data_clean = data_clean * SCALE_FACTOR_2
+        data_clean *= SCALE_FACTOR_2
 
         # perform convolution using Gaussian filter defined above
-        data_conv = np.apply_along_axis(lambda m: np.ma.convolve(m, filt, mode='same'), axis=0, arr=data_clean)
-        data_conv = np.ma.masked_invalid(data_conv[filter_size:len(all_data_keys)+filter_size])
+        data_clean = np.apply_along_axis(lambda m: np.convolve(m, filt, mode='same'), axis=0, arr=data_clean)
+        data_conv = data_clean
+        data_clean = None
+        data_conv = data_conv[filter_size:len(all_data_keys)+filter_size]
 
         for index, key in enumerate(all_data_keys):
             temp[key] = data_conv[index]
@@ -711,7 +713,8 @@ def write_brdf_fallback_band(h5_info, tile, band, outdir, filter_size, set_doys,
         pool.starmap(apply_threshold,
                      [(clean_data_file, h5_info, albedo_band_name(band),
                        window, filter_size, thresholds, bad_indices[window])
-                      for window in generate_windows(shape, compute_chunks)])
+                      for window in generate_windows(shape,
+                                                     compute_chunks=tuple(5 * x for x in compute_chunks))])
 
     clean_data_file = pjoin(outdir, 'clean_data_{}_{}.h5'.format(band, tile))
     for doy in set_doys:

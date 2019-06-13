@@ -11,7 +11,6 @@ import os
 from os.path import join as pjoin
 import datetime
 
-from memory_profiler import profile
 from multiprocessing import Pool as ProcessPool, Lock
 import fnmatch
 import h5py
@@ -28,7 +27,9 @@ import brdf_shape
 
 BAND_LIST = ['Band{}'.format(band) for band in range(1, 8)]
 
-BRDF_AVG_FILE_FMT = 'MCD43A1.JLAV.006.{}.DOY.{:03}.{}.h5'
+BRDF_AVG_FILE_BAND_FMT = 'MCD43A1.JLAV.006.{}.DOY.{:03}.{}.h5'
+BRDF_AVG_FILE_FMT = 'MCD43A1.JLAV.006.{}.DOY.{:03}.h5'
+BRDF_MATCH_PATTERN = '*{}.DOY.{:03}*Band*.h5'
 
 TILES = ['h29v10', 'h30v10', 'h31v10', 'h32v10', 'h27v11', 'h28v11', 'h29v11', 'h30v11',
          'h31v11', 'h27v12', 'h28v12', 'h29v12', 'h30v12', 'h31v12', 'h28v13', 'h29v13']
@@ -616,10 +617,6 @@ def apply_convolution(filename, h5_info, window, filter_size, mask_indices):
             d[mask_indices] = np.nan
             return d
 
-    def __convolve(data, filt, mode='same'):
-        
-        return np.convolve(data, filt, mode=mode)
-
     data_convolved = {}
 
     for param_index, param in enumerate(BrdfModelParameters):
@@ -651,17 +648,10 @@ def apply_convolution(filename, h5_info, window, filter_size, mask_indices):
         # perform convolution using Gaussian filter defined above
         for i in range(data_clean.shape[1]): 
             for j in range(data_clean.shape[2]):
-                data_conv = __convolve(data_clean[:,i,j], filt, mode='same')
-                data_clean[:,i,j] = data_conv
-        print(data_clean.shape)
+                data_clean[:, i, j] = np.convolve(data_clean[:, i, j], filt, mode='same')
 
-        # data_clean = np.apply_along_axis(lambda m: np.convolve(m, filt, mode='same'), axis=0, arr=data_clean)
-        # data_conv = data_clean
-        # data_clean = None
-        data_clean = data_clean[filter_size:len(all_data_keys)+filter_size]
-        print(data_clean.shape)
         for index, key in enumerate(all_data_keys):
-            temp[key] = data_clean[index]
+            temp[key] = data_clean[index + filter_size]
 
         data_convolved[param] = temp
 
@@ -684,7 +674,7 @@ def post_cleanup_process(window, set_doys, h5_info, outdir, tile, clean_data_fil
         avg_data = temporal_average(data_convolved, doy)
         filtered_data = brdf_indices_quality_check(avg_data=avg_data)
 
-        outfile = pjoin(outdir, BRDF_AVG_FILE_FMT.format(tile, doy, band))
+        outfile = pjoin(outdir, BRDF_AVG_FILE_BAND_FMT.format(tile, doy, band))
         with LOCKS[outfile]:
             with h5py.File(outfile) as fid:
                 write_chunk(filtered_data, fid, band, window=(slice(None),) + window)
@@ -708,7 +698,7 @@ def write_brdf_fallback_band(h5_info, tile, band, outdir, filter_size, set_doys,
 
     # get the index where band_quality number is less the minimum number of valid pixels required
     bad_indices = (quality_count < min_numpix_required).filled(False)
-    '''
+
     thresholds = calculate_thresholds(h5_info, albedo_band_name(band), shape, compute_chunks, nprocs=nprocs)
     quality_count = None
 
@@ -725,11 +715,9 @@ def write_brdf_fallback_band(h5_info, tile, band, outdir, filter_size, set_doys,
                        window, filter_size, thresholds, bad_indices[window])
                       for window in generate_windows(shape,
                                                      compute_chunks=compute_chunks)])
-    '''
-    # TODO remove clean_data_file
-    clean_data_file = pjoin(outdir, 'clean_data_{}_{}.h5'.format(band, tile))
+
     for doy in set_doys:
-        outfile = pjoin(outdir, BRDF_AVG_FILE_FMT.format(tile, doy, band))
+        outfile = pjoin(outdir, BRDF_AVG_FILE_BAND_FMT.format(tile, doy, band))
         LOCKS[outfile] = Lock()
 
         with h5py.File(outfile, 'w') as fid:
@@ -741,7 +729,7 @@ def write_brdf_fallback_band(h5_info, tile, band, outdir, filter_size, set_doys,
                        clean_data_file, filter_size, band, bad_indices)
                       for window in generate_windows(shape, compute_chunks)])
 
-    # os.remove(clean_data_file)
+    os.remove(clean_data_file)
 
 
 def write_brdf_fallback(brdf_dir, outdir, tile, year_from, year_to, filter_size, nprocs, compression):
@@ -752,17 +740,14 @@ def write_brdf_fallback(brdf_dir, outdir, tile, year_from, year_to, filter_size,
     set_doys = sorted(set(folder_doy(item) for item in h5_info))
 
     with tempfile.TemporaryDirectory() as tmp_dir:
-        tmp_dir = outdir 
         for band in BAND_LIST:
             write_brdf_fallback_band(h5_info, tile, band, tmp_dir, filter_size, set_doys,
                                      pthresh=10.0, data_chunks=(1, 240, 240), compute_chunks=(240, 240),
                                      nprocs=nprocs, compression=compression)
-        exit()
         with Pool(processes=nprocs) as pool: 
-            pool.starmap(concatenate_files, [([str(fp) for fp in Path(tmp_dir).rglob('*{}.DOY.{:03}*Band*.h5'
+            pool.starmap(concatenate_files, [([str(fp) for fp in Path(tmp_dir).rglob(BRDF_MATCH_PATTERN
                                                                                      .format(tile, doy))],
-                                              os.path.join(outdir, 'MCD43A1.JLAV.006.{}.DOY.{:03}.h5'
-                                                           .format(tile, doy)),
+                                              os.path.join(outdir, BRDF_AVG_FILE_FMT.format(tile, doy)),
                                               {key: h5_info[key] for key in h5_info if folder_doy(key) == doy},
                                               h5_info)
                                              for doy in set_doys])
@@ -775,7 +760,7 @@ def write_brdf_fallback(brdf_dir, outdir, tile, year_from, year_to, filter_size,
 @click.option('--year-from', default=2002)
 @click.option('--year-to', default=2018)
 @click.option('--filter-size', default=22)
-@click.option('--nprocs', default=25)
+@click.option('--nprocs', default=27)
 @click.option('--compression', default=H5CompressionFilter.BLOSC_ZSTANDARD)
 def main(brdf_dir, outdir, tile, year_from, year_to, filter_size, nprocs, compression):
     write_brdf_fallback(brdf_dir, outdir, tile, year_from, year_to, filter_size, nprocs, compression)

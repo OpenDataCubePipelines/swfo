@@ -31,9 +31,6 @@ BRDF_AVG_FILE_BAND_FMT = 'MCD43A1.JLAV.006.{}.DOY.{:03}.{}.h5'
 BRDF_AVG_FILE_FMT = 'MCD43A1.JLAV.006.{}.DOY.{:03}.h5'
 BRDF_MATCH_PATTERN = '*{}.DOY.{:03}*Band*.h5'
 
-TILES = ['h29v10', 'h30v10', 'h31v10', 'h32v10', 'h27v11', 'h28v11', 'h29v11', 'h30v11',
-         'h31v11', 'h27v12', 'h28v12', 'h29v12', 'h30v12', 'h31v12', 'h28v13', 'h29v13']
-
 LOCKS = {}
 
 NODATA = 32767
@@ -172,21 +169,21 @@ def read_brdf_quality_dataset(ds, window=None):
     if window is None:
         window = slice(None)
 
-    data = ds[window]
+    data = ds[window].astype('float32')
 
-    nodata = ds.attrs['_FillValue']
-    nodata_mask = (data == nodata)
-    data = data.astype('float32')
+    nodata_mask = (data == float(ds.attrs['_FillValue']))
     data[nodata_mask] = np.nan
-
+    
     return data
 
 
-def read_brdf_dataset(ds, window=None):
+def read_brdf_dataset(ds, param,  window=None):
     """
     :param ds:
         A 'file object' type: hdf5 file object containing the BRDF data set
         as a numpy structured data.
+    :param param:
+        A 'str' type: name of brdf parameter 
     :param window:
         A 'slice object' type: contain the set of indices specified by
         range(start, stop, step). Default=None, results in reading whole
@@ -199,12 +196,9 @@ def read_brdf_dataset(ds, window=None):
     if window is None:
         window = slice(None)
 
-    data = ds[window]
-    data = np.array([data['ISO'], data['VOL'], data['GEO']]).astype('float32')
-
-    nodata = ds.attrs['_FillValue']
-    nodata_mask = (data == nodata)
-
+    data = ds[window][param].astype('float32')
+    
+    nodata_mask = (data == float(ds.attrs['_FillValue']))
     data[nodata_mask] = np.nan
 
     scale_factor = ds.attrs['scale_factor']
@@ -357,20 +351,20 @@ def brdf_indices_quality_check(avg_data=None):
     return filtered_data
 
 
-def get_std_block(h5_info, band_name, index, window):
+def get_std_block(h5_info, band_name, param, window):
     """
     A function to compute a standard deviation for across a temporal axis.
     This function was written to facilitate parallel processing.
     """
 
-    def __get_data(dat_filename, window):
+    def __get_data(dat_filename, param, window):
         with h5py.File(dat_filename, 'r') as fid:
-            dat = read_brdf_dataset(fid[band_name], window)
+            dat = read_brdf_dataset(fid[band_name], param, window)
             return dat
 
     data = np.zeros((len(h5_info),) + shape_of_window(window), dtype='float32')
     for layer, filename in enumerate(h5_info.values()):
-        data[layer] = __get_data(filename, (index,) + window)
+        data[layer] = __get_data(filename, param,  window)
 
     run_median = np.nanmedian(data, axis=0, keepdims=False)
 
@@ -426,10 +420,10 @@ def calculate_thresholds(h5_info, band_name, shape, compute_chunks, nprocs=None)
     Computes threshold needed needed to clean temporal series
     """
     thresh_dict = {}
-    for index, param in enumerate(BrdfModelParameters):
+    for param in BrdfModelParameters:
         with Pool(nprocs) as pool:
             results = pool.starmap(get_std_block,
-                                   [(h5_info, band_name, index, window)
+                                   [(h5_info, band_name, param.value, window)
                                     for window in generate_windows(shape, compute_chunks)])
 
         thresh_dict[param] = np.nanmean(results)
@@ -562,9 +556,9 @@ def apply_threshold(clean_data_file, h5_info, band_name, window, filter_size, th
     """
     all_data_keys = sorted(list(h5_info.keys()))
 
-    def get_albedo_data(filename, window):
+    def get_albedo_data(filename, param, window):
         with h5py.File(filename, 'r') as fid:
-            return read_brdf_dataset(fid[band_name], window)
+            return read_brdf_dataset(fid[band_name], param, window)
 
     # dictionary mapping date to data
     data_dict = {}
@@ -582,7 +576,8 @@ def apply_threshold(clean_data_file, h5_info, band_name, window, filter_size, th
         # read the data relevant to this range
         for date in all_data_keys[start_idx:end_idx]:
             if date not in data_dict:
-                data_dict[date] = np.ma.masked_invalid(get_albedo_data(h5_info[date], (slice(None),) + window))
+                data_dict[date] = np.ma.masked_invalid(np.array([get_albedo_data(h5_info[date], param.value, window) 
+                                                                for param in BrdfModelParameters]))
 
         # clean up the data we don't need anymore
         for date in list(data_dict):
@@ -725,10 +720,10 @@ def write_brdf_fallback_band(h5_info, tile, band, outdir, filter_size, set_doys,
 
     thresholds = calculate_thresholds(h5_info, albedo_band_name(band), shape, compute_chunks, nprocs=nprocs)
     quality_count = None
-
+    
     clean_data_file = pjoin(outdir, 'clean_data_{}_{}.h5'.format(band, tile))
     LOCKS[clean_data_file] = Lock()
-    
+  
     with h5py.File(clean_data_file, 'w') as clean_data:
         for key in h5_info:
             create_dataset(clean_data, key, (3, shape[0], shape[1]), {})
@@ -778,8 +773,8 @@ def write_brdf_fallback(brdf_dir, outdir, tile, year_from, year_to, filter_size,
 
 
 @click.command()
-@click.option('--brdf-dir', default='/g/data/v10/eoancillarydata.reS/brdf.ia/MCD43A1.006/')
-@click.option('--outdir', default='/g/data/u46/users/pd1813/BRDF_PARAM/test_new_data')
+@click.option('--brdf-dir', default='/g/data/v10/eoancillarydata.reS/brdf.av/MCD43A1.006/')
+@click.option('--outdir', default='/g/data/u46/users/pd1813/BRDF_PARAM/test_struct')
 @click.option('--tile', default='h29v12')
 @click.option('--year-from', default=2002)
 @click.option('--year-to', default=2018)

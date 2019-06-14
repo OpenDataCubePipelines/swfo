@@ -748,7 +748,7 @@ def write_brdf_fallback_band(h5_info, tile, band, outdir, filter_size, set_doys,
                        clean_data_file, filter_size, band, bad_indices)
                       for window in generate_windows(shape, compute_chunks)])
 
-    os.remove(clean_data_file)
+    # os.remove(clean_data_file)
 
 
 def write_brdf_fallback(brdf_dir, outdir, tile, year_from, year_to, filter_size, nprocs, compression):
@@ -759,10 +759,12 @@ def write_brdf_fallback(brdf_dir, outdir, tile, year_from, year_to, filter_size,
     set_doys = sorted(set(folder_doy(item) for item in h5_info))
 
     with tempfile.TemporaryDirectory() as tmp_dir:
+        tmp_dir = outdir
         for band in BAND_LIST:
             write_brdf_fallback_band(h5_info, tile, band, tmp_dir, filter_size, set_doys,
                                      pthresh=10.0, data_chunks=(1, 240, 240), compute_chunks=(240, 240),
                                      nprocs=nprocs, compression=compression)
+            exit()
         with Pool(processes=nprocs) as pool: 
             pool.starmap(concatenate_files, [([str(fp) for fp in Path(tmp_dir).rglob(BRDF_MATCH_PATTERN
                                                                                      .format(tile, doy))],

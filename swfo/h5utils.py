@@ -155,6 +155,19 @@ def _append_data_to_existing_file(inh5: h5py.Group, outh5: h5py.Group, track_ord
 
     md_docs = []
     md_names = []
+
+    # Confirm new non-metadata datasets are missing in output file
+    for k in list(inh5.keys()):
+        if k == PUBLIC_NAMESPACE or k == PRIVATE_NAMESPACE:
+            continue
+        else:
+            for ds_path in _traverse(inh5, k):
+                if outh5.get(ds_path):
+                    raise RuntimeError(
+                        "Dataset {} already exists in file: {}".format(
+                            ds_path, outh5.filename
+                        )
+                    )
     for k in list(inh5.keys())[::_traversal_step]:
         if k == PUBLIC_NAMESPACE:
             continue

@@ -940,6 +940,7 @@ def write_brdf_fallback(
     julian_days.discard(366)
 
     with tempfile.TemporaryDirectory() as tmp_dir:
+        tmp_dir = outdir
         for band in BAND_LIST:
             write_brdf_fallback_band(h5_info, tile, band, tmp_dir, filter_size, julian_days,
                                      pthresh=10.0, data_chunks=(240, 240), compute_chunks=(240, 240),

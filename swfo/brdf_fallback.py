@@ -227,9 +227,7 @@ def read_brdf_dataset(ds, param, window=None):
         window = slice(None)
 
     data = ds[window][param].astype('float32')
-
     nodata_mask = (data == float(ds.attrs['_FillValue']))
-
     data[nodata_mask] = np.nan
 
     scale_factor = ds.attrs['scale_factor']
@@ -888,7 +886,6 @@ def write_brdf_fallback_band(
     quality_count = None
 
     clean_data_file = pjoin(outdir, 'clean_data_{}_{}.h5'.format(band, tile))
-
     LOCKS[clean_data_file] = Lock()
 
     with h5py.File(clean_data_file, 'w') as clean_data:

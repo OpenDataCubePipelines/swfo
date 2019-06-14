@@ -207,11 +207,13 @@ def read_brdf_quality_dataset(ds, window=None):
     return data
 
 
-def read_brdf_dataset(ds, window=None):
+def read_brdf_dataset(ds, param,  window=None):
     """
     :param ds:
         A 'file object' type: hdf5 file object containing the BRDF data set
         as a numpy structured data.
+    :param param:
+        A 'str' type: name of brdf parameter 
     :param window:
         A 'slice object' type: contain the set of indices specified by
         range(start, stop, step). Default=None, results in reading whole
@@ -224,12 +226,9 @@ def read_brdf_dataset(ds, window=None):
     if window is None:
         window = slice(None)
 
-    data = ds[window]
-    data = np.array([data['ISO'], data['VOL'], data['GEO']]).astype('float32')
-
-    nodata = ds.attrs['_FillValue']
-    nodata_mask = (data == nodata)
-
+    data = ds[window][param].astype('float32')
+    
+    nodata_mask = (data == float(ds.attrs['_FillValue']))
     data[nodata_mask] = np.nan
 
     scale_factor = ds.attrs['scale_factor']
@@ -826,7 +825,6 @@ def write_brdf_fallback_band(h5_info, tile, band, outdir, filter_size, set_doys,
     quality_count = None
     
     clean_data_file = pjoin(outdir, 'clean_data_{}_{}.h5'.format(band, tile))
-    
     LOCKS[clean_data_file] = Lock()
   
     with h5py.File(clean_data_file, 'w') as clean_data:

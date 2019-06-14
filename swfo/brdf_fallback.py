@@ -207,13 +207,11 @@ def read_brdf_quality_dataset(ds, window=None):
     return data
 
 
-def read_brdf_dataset(ds, param,  window=None):
+def read_brdf_dataset(ds, window=None):
     """
     :param ds:
         A 'file object' type: hdf5 file object containing the BRDF data set
         as a numpy structured data.
-    :param param:
-        A 'str' type: name of brdf parameter 
     :param window:
         A 'slice object' type: contain the set of indices specified by
         range(start, stop, step). Default=None, results in reading whole
@@ -226,10 +224,18 @@ def read_brdf_dataset(ds, param,  window=None):
     if window is None:
         window = slice(None)
 
-    data = ds[window][param].astype('float32')
-    
-    nodata_mask = (data == float(ds.attrs['_FillValue']))
+    data = ds[window]
+    data = np.array([data['ISO'], data['VOL'], data['GEO']]).astype('float32')
+
+    nodata = ds.attrs['_FillValue']
+    nodata_mask = (data == nodata)
+
     data[nodata_mask] = np.nan
+
+    scale_factor = ds.attrs['scale_factor']
+    add_offset = ds.attrs['add_offset']
+
+    return scale_factor * (data - add_offset)
 
     
 def get_qualityband_count_window(h5_info, band_name, window):

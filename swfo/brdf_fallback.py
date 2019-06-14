@@ -156,14 +156,14 @@ def hdf5_files(brdf_dir, tile, year_from=None, year_to=None):
     return h5_info
 
 
-def read_brdf_dataset(ds, window=None):
+def read_brdf_quality_dataset(ds, window=None):
     """
     :param ds:
-        A 'file object' type: hdf5 file object containing the BRDF data set
+        A 'file object' type: hdf5 file object containing the BRDF quality data set.
     :param window:
         A 'slice object' type: contain the set of indices specified by
         range(start, stop, step). Default=None, results in reading whole
-        data set
+        data set.
     :return:
         A 'array' type: slice of data set specified by window if set or all
         the data set. The BRDF parameter are scale and offset factor
@@ -179,20 +179,44 @@ def read_brdf_dataset(ds, window=None):
     data = data.astype('float32')
     data[nodata_mask] = np.nan
 
-    # quality data
-    if len(ds.shape) != 3:
-        return data
+    return data
 
-    # BRDF data
+
+def read_brdf_dataset(ds, window=None):
+    """
+    :param ds:
+        A 'file object' type: hdf5 file object containing the BRDF data set
+        as a numpy structured data.
+    :param window:
+        A 'slice object' type: contain the set of indices specified by
+        range(start, stop, step). Default=None, results in reading whole
+        data set.
+    :return:
+        A 'array' type: slice of data set specified by window if set or all
+        the data set. The BRDF parameter are scale and offset factor
+        corrected and filled with numpy 'nan' for no data values.
+    """
+    if window is None:
+        window = slice(None)
+
+    data = ds[window]
+    data = np.array([data['ISO'], data['VOL'], data['GEO']]).astype('float32')
+
+    nodata = ds.attrs['_FillValue']
+    nodata_mask = (data == nodata)
+
+    data[nodata_mask] = np.nan
+
     scale_factor = ds.attrs['scale_factor']
     add_offset = ds.attrs['add_offset']
+
     return scale_factor * (data - add_offset)
 
 
 def get_qualityband_count_window(h5_info, band_name, window):
     def read_quality_data(filename):
         with h5py.File(filename, 'r') as fid:
-            return 1. - read_brdf_dataset(fid[band_name], window)
+            return 1. - read_brdf_quality_dataset(fid[band_name], window)
 
     first, *rest = list(h5_info)
 

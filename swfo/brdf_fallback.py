@@ -10,8 +10,8 @@ import tempfile
 import os
 from os.path import join as pjoin
 import datetime
-
-from multiprocessing import Pool as ProcessPool, Lock
+import multiprocessing as mp
+from multiprocessing import Pool as ProcessPool, Lock 
 import fnmatch
 import h5py
 import numpy as np
@@ -770,27 +770,34 @@ def write_brdf_fallback(brdf_dir, outdir, tile, year_from, year_to, filter_size,
     """
     h5_info = hdf5_files(brdf_dir, tile=tile, year_from=year_from, year_to=year_to)
     set_doys = sorted(set(folder_doy(item) for item in h5_info))
+    
+    # remove doy 366 from further processing, final results for 366 will be symlinked to doy 365
+    set_doys.remove(366)
 
     with tempfile.TemporaryDirectory() as tmp_dir:
         for band in BAND_LIST:
             write_brdf_fallback_band(h5_info, tile, band, tmp_dir, filter_size, set_doys,
                                      pthresh=10.0, data_chunks=(240, 240), compute_chunks=(240, 240),
                                      nprocs=nprocs, compression=compression)
+     
         with Pool(processes=nprocs) as pool: 
             pool.starmap(concatenate_files, [([str(fp) for fp in Path(tmp_dir).rglob(BRDF_MATCH_PATTERN
                                                                                      .format(tile, doy))],
                                               os.path.join(outdir, BRDF_AVG_FILE_FMT.format(tile, doy)),
-                                              h5_info) for doy in set_doys])
-
+                                              h5_info, doy) for doy in set_doys])
+    
+    # symlink doy 366 to the final results of doy 365 results 
+    os.symlink(os.path.join(outdir, BRDF_AVG_FILE_FMT.format(tile, 365)), 
+               os.path.join(outdir, BRDF_AVG_FILE_FMT.format(tile, 366)))
 
 @click.command()
-@click.option('--brdf-dir', default='/g/data/v10/eoancillarydata.reS/brdf.av/MCD43A1.006/')
-@click.option('--outdir', default='/g/data/u46/users/pd1813/BRDF_PARAM/test_struct')
+@click.option('--brdf-dir', default='/g/data/v10/eoancillarydata.reS/brdf.ia/MCD43A1.006/')
+@click.option('--outdir', default='/g/data/u46/users/pd1813/BRDF_PARAM/test_v32')
 @click.option('--tile', default='h29v12')
 @click.option('--year-from', default=2002)
 @click.option('--year-to', default=2018)
 @click.option('--filter-size', default=22)
-@click.option('--nprocs', default=27)
+@click.option('--nprocs', default=mp.cpu_count()-20)
 @click.option('--compression', default=H5CompressionFilter.BLOSC_ZSTANDARD)
 def main(brdf_dir, outdir, tile, year_from, year_to, filter_size, nprocs, compression):
     write_brdf_fallback(brdf_dir, outdir, tile, year_from, year_to, filter_size, nprocs, compression)

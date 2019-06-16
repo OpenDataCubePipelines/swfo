@@ -43,6 +43,13 @@ SCALE_FACTOR_2 = 0.001
 INV_SCALE_FACTOR_2 = 1000
 
 
+DTYPE_MAIN = np.dtype([(BrdfModelParameters.ISO.value, 'int16'),
+                       (BrdfModelParameters.VOL.value, 'int16'), 
+                       (BrdfModelParameters.GEO.value, 'int16')])
+DTYPE_SUPPORT = np.dtype([('AFX', 'int16'), ('RMS', 'int16')])
+DTYPE_QUALITY = np.dtype([('MASK', 'int16'), ('NUM', 'int16')])
+
+
 def albedo_band_name(band):
     """
     :param band:
@@ -342,10 +349,10 @@ def brdf_indices_quality_check(avg_data=None):
         temp[BrdfModelParameters.ISO.value] = np.ma.masked_array(iso_mean, mask=combined_mask)
         temp[BrdfModelParameters.VOL.value] = np.ma.masked_array(alpha1 * iso_mean, mask=combined_mask)
         temp[BrdfModelParameters.GEO.value] = np.ma.masked_array(alpha2 * iso_mean, mask=combined_mask)
-        temp['afx'] = np.ma.masked_array(afx, mask=combined_mask)
-        temp['rms'] = np.ma.masked_array(rms, mask=combined_mask)
-        temp['mask'] = np.array(combined_mask)
-        temp['num'] = np.array(min_num)
+        temp['AFX'] = np.ma.masked_array(afx, mask=combined_mask)
+        temp['RMS'] = np.ma.masked_array(rms, mask=combined_mask)
+        temp['MASK'] = np.array(combined_mask)
+        temp['NUM'] = np.array(min_num)
         filtered_data[key] = temp
 
     return filtered_data
@@ -375,13 +382,10 @@ def get_std_block(h5_info, band_name, param, window):
     return np.nanstd(data, axis=0, ddof=1, keepdims=False)
 
 
-def concatenate_files(infile_paths, outfile, avg_metadata, threshold_metadata):
+def concatenate_files(infile_paths, outfile, h5_info):
     """
     A function to concatenate multiple h5 files
     """
-    if os.path.exists(outfile):
-        os.remove(outfile)
-
     assert len(infile_paths) == 7
 
     # TODO create dataset to store uuid for brdf_fallback provenance (use h5_info for threshold generation
@@ -432,7 +436,7 @@ def calculate_thresholds(h5_info, band_name, shape, compute_chunks, nprocs=None)
 
 
 def create_dataset(group, band_name, shape, attrs,
-                   dtype=np.int16, chunks=(1, 240, 240), filter_opts=None,
+                   dtype=np.int16, chunks=(240, 240), filter_opts=None,
                    compression=H5CompressionFilter.BLOSC_ZSTANDARD):
     if filter_opts is None:
         filter_opts = {}
@@ -451,40 +455,37 @@ def create_dataset(group, band_name, shape, attrs,
 
 
 def create_brdf_datasets(group, band_name, shape, common_attrs,
-                         chunks=(1, 240, 240), filter_opts=None,
+                         chunks=(240, 240), filter_opts=None,
                          compression=H5CompressionFilter.BLOSC_ZSTANDARD):
 
     attrs = dict(scale_factor=SCALE_FACTOR, add_offset=0,
-                 _FillValue=NODATA, bands="{}: 1, {}: 2:, {}: 3".format(BrdfModelParameters.ISO.value,
-                                                                        BrdfModelParameters.VOL.value,
-                                                                        BrdfModelParameters.GEO.value),
-                 description=('BRDF albedo parameters (iso, vol and geo)'
+                 _FillValue=NODATA,
+                 description=('BRDF albedo parameters (ISO, VOL and GEO)'
                               ' derived from {}'
                               ' in lognormal space'.format(albedo_band_name(band_name))),
                  **common_attrs)
     create_dataset(group, 'BRDF_Albedo_Parameters_{}'.format(band_name),
-                   (3,) + shape, attrs,
-                   chunks=chunks, filter_opts=filter_opts, compression=compression)
+                   shape, attrs,
+                   chunks=chunks, filter_opts=filter_opts, compression=compression, dtype=DTYPE_MAIN)
 
     attrs = dict(scale_factor=SCALE_FACTOR, add_offset=0,
-                 _FillValue=NODATA, bands="afx: 1, rms: 2",
-                 description=('BRDF shape indices (afx and rms)'
+                 _FillValue=NODATA,
+                 description=('BRDF shape indices (AFX and RMS)'
                               ' generated to support future validation work'),
                  **common_attrs)
     create_dataset(group, 'BRDF_Albedo_Shape_Indices_{}'.format(band_name),
-                   (2,) + shape, attrs,
-                   chunks=chunks, filter_opts=filter_opts, compression=compression)
+                   shape, attrs,
+                   chunks=chunks, filter_opts=filter_opts, compression=compression, dtype=DTYPE_SUPPORT)
 
-    attrs = dict(description=('Mask and number of valid data used'
+    attrs = dict(description=('MASK and NUM(BER) of valid data used'
                               ' in generating BRDF Albedo shape parameters'),
-                 bands="mask: 1, num: 2",
                  **common_attrs)
     create_dataset(group, 'BRDF_Albedo_Shape_Parameters_Quality_{}'.format(band_name),
-                   (2,) + shape, attrs,
-                   chunks=chunks, filter_opts=filter_opts, compression=compression)
+                   shape, attrs,
+                   chunks=chunks, filter_opts=filter_opts, compression=compression, dtype=DTYPE_QUALITY)
 
 
-def write_chunk(data_dict, fid, band_name, window):
+def write_chunk(data_dict, fid, band, window):
     """
     write numpy array to to h5 files with user supplied attributes
     and compression
@@ -492,25 +493,29 @@ def write_chunk(data_dict, fid, band_name, window):
     # refactor?
     assert len(data_dict) == 1
     key = list(data_dict.keys())[0]
+    shape = shape_of_window(window)
 
-    data_main = np.ma.array([data_dict[key][BrdfModelParameters.ISO.value],
-                             data_dict[key][BrdfModelParameters.VOL.value],
-                             data_dict[key][BrdfModelParameters.GEO.value]])
+   
+    data_main = np.ndarray(shape, dtype=DTYPE_MAIN)
+    for band_name in DTYPE_MAIN.names: 
+        data = data_dict[key][band_name]
+        data_main[band_name] = np.rint(data_dict[key][band_name] 
+                                         * INV_SCALE_FACTOR).filled(fill_value=NODATA).astype('int16')
+                                         
+    data_support = np.ndarray(shape, dtype=DTYPE_SUPPORT)
+    for band_name in DTYPE_SUPPORT.names: 
+        data_support[band_name] = np.rint(data_dict[key][band_name]
+                                                  * INV_SCALE_FACTOR).filled(fill_value=NODATA).astype('int16')
 
-    data_support = np.ma.array([data_dict[key]['afx'], data_dict[key]['rms']])
-    data_quality = np.array([data_dict[key]['mask'], data_dict[key]['num']])
+    data_quality = np.ndarray(shape, dtype=DTYPE_QUALITY)
+    for band_name in DTYPE_QUALITY.names: 
+        data_quality[band_name] = data_dict[key][band_name].astype('int16')
+   
+    print(data_quality)
 
-    data_main = data_main * INV_SCALE_FACTOR
-    data_main = np.rint(data_main).filled(fill_value=NODATA).astype(np.int16)
-
-    fid['BRDF_Albedo_Parameters_{}'.format(band_name)][window] = data_main
-
-    data_support = data_support * INV_SCALE_FACTOR
-    data_support = np.rint(data_support).filled(fill_value=NODATA).astype(np.int16)
-    fid['BRDF_Albedo_Shape_Indices_{}'.format(band_name)][window] = data_support
-
-    data_quality = data_quality.astype(np.int16)
-    fid['BRDF_Albedo_Shape_Parameters_Quality_{}'.format(band_name)][window] = data_quality
+    fid['BRDF_Albedo_Parameters_{}'.format(band)][window] = data_main
+    fid['BRDF_Albedo_Shape_Indices_{}'.format(band)][window] = data_support
+    fid['BRDF_Albedo_Shape_Parameters_Quality_{}'.format(band)][window] = data_quality
 
 
 def get_band_info(h5_info, band_name):
@@ -696,7 +701,7 @@ def post_cleanup_process(window, set_doys, h5_info, outdir, tile, clean_data_fil
         outfile = pjoin(outdir, BRDF_AVG_FILE_BAND_FMT.format(tile, doy, band))
         with LOCKS[outfile]:
             with h5py.File(outfile) as fid:
-                write_chunk(filtered_data, fid, band, window=(slice(None),) + window)
+                write_chunk(filtered_data, fid, band, window=window)
 
 
 def write_brdf_fallback_band(h5_info, tile, band, outdir, filter_size, set_doys,
@@ -722,19 +727,19 @@ def write_brdf_fallback_band(h5_info, tile, band, outdir, filter_size, set_doys,
     quality_count = None
     
     clean_data_file = pjoin(outdir, 'clean_data_{}_{}.h5'.format(band, tile))
+    
     LOCKS[clean_data_file] = Lock()
-  
+    
     with h5py.File(clean_data_file, 'w') as clean_data:
         for key in h5_info:
-            create_dataset(clean_data, key, (3, shape[0], shape[1]), {})
-
+            create_dataset(clean_data, key, (3, shape[0], shape[1]), {}, chunks=(1,) + data_chunks)
+    
     with Pool(processes=nprocs) as pool:
         pool.starmap(apply_threshold,
                      [(clean_data_file, h5_info, albedo_band_name(band),
                        window, filter_size, thresholds, bad_indices[window])
                       for window in generate_windows(shape,
                                                      compute_chunks=compute_chunks)])
-
     for doy in set_doys:
         outfile = pjoin(outdir, BRDF_AVG_FILE_BAND_FMT.format(tile, doy, band))
         LOCKS[outfile] = Lock()
@@ -759,19 +764,16 @@ def write_brdf_fallback(brdf_dir, outdir, tile, year_from, year_to, filter_size,
     set_doys = sorted(set(folder_doy(item) for item in h5_info))
 
     with tempfile.TemporaryDirectory() as tmp_dir:
-        tmp_dir = outdir
         for band in BAND_LIST:
             write_brdf_fallback_band(h5_info, tile, band, tmp_dir, filter_size, set_doys,
-                                     pthresh=10.0, data_chunks=(1, 240, 240), compute_chunks=(240, 240),
+                                     pthresh=10.0, data_chunks=(240, 240), compute_chunks=(240, 240),
                                      nprocs=nprocs, compression=compression)
             exit()
         with Pool(processes=nprocs) as pool: 
             pool.starmap(concatenate_files, [([str(fp) for fp in Path(tmp_dir).rglob(BRDF_MATCH_PATTERN
                                                                                      .format(tile, doy))],
                                               os.path.join(outdir, BRDF_AVG_FILE_FMT.format(tile, doy)),
-                                              {key: h5_info[key] for key in h5_info if folder_doy(key) == doy},
-                                              h5_info)
-                                             for doy in set_doys])
+                                              h5_info) for doy in set_doys])
 
 
 @click.command()

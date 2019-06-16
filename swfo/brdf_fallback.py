@@ -382,15 +382,25 @@ def get_std_block(h5_info, band_name, param, window):
     return np.nanstd(data, axis=0, ddof=1, keepdims=False)
 
 
-def concatenate_files(infile_paths, outfile, h5_info):
+def concatenate_files(infile_paths, outfile, h5_info, doy):
     """
     A function to concatenate multiple h5 files
     """
     assert len(infile_paths) == 7
 
-    # TODO create dataset to store uuid for brdf_fallback provenance (use h5_info for threshold generation
-    # and avg_metadata for average brdf parameters generation. h5_info and average_metadata are
-    # dictionary(eg : key = '2002.01.01', value = 'absolute path to a h5 file'
+    # TODO create dataset to store uuid for brdf_fallback provenance (use h5_info 
+    # for to id files used in  threshold generation)
+    # h5_info is a dict with key, val pairs: eg : key = '2002.01.01', 
+    # value = 'absolute path to a h5 file'. 
+
+    # if we want to store medata data for averages produced for each day of year
+    # then use following average_metadata dict, which contains the absolute path 
+    # of the files used in average brdf generation. 
+
+    # average_metadata = {key: h5_info[key] for key in h5_info if folder_doy(key) == doy}
+
+    # TODO write dataset called METADATA in outfile (final h5 files containting the 
+    # average brdf datasets for all seven MODIS bands. 
 
     with h5py.File(outfile, 'w') as out_fid:
         for fp in infile_paths:
@@ -490,8 +500,8 @@ def write_chunk(data_dict, fid, band, window):
     write numpy array to to h5 files with user supplied attributes
     and compression
     """
-    # refactor?
     assert len(data_dict) == 1
+    
     key = list(data_dict.keys())[0]
     shape = shape_of_window(window)
 
@@ -511,8 +521,6 @@ def write_chunk(data_dict, fid, band, window):
     for band_name in DTYPE_QUALITY.names: 
         data_quality[band_name] = data_dict[key][band_name].astype('int16')
    
-    print(data_quality)
-
     fid['BRDF_Albedo_Parameters_{}'.format(band)][window] = data_main
     fid['BRDF_Albedo_Shape_Indices_{}'.format(band)][window] = data_support
     fid['BRDF_Albedo_Shape_Parameters_Quality_{}'.format(band)][window] = data_quality

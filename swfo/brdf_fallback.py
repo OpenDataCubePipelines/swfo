@@ -73,6 +73,13 @@ def get_datetime(dt: Optional[datetime.datetime] = None):
     return dt
 
 
+DTYPE_MAIN = np.dtype([(BrdfModelParameters.ISO.value, 'int16'),
+                       (BrdfModelParameters.VOL.value, 'int16'), 
+                       (BrdfModelParameters.GEO.value, 'int16')])
+DTYPE_SUPPORT = np.dtype([('AFX', 'int16'), ('RMS', 'int16')])
+DTYPE_QUALITY = np.dtype([('MASK', 'int16'), ('NUM', 'int16')])
+
+
 def albedo_band_name(band):
     """
     :param band:
@@ -798,8 +805,6 @@ def post_cleanup_process(window, set_doys, h5_info, outdir, tile, clean_data_fil
         with LOCKS[outfile]:
             with h5py.File(outfile) as fid:
                 write_chunk(filtered_data, fid, band, window=window)
-                # md = generate_fallback_metadata_doc(h5_info, doy)
-                # write_h5_md(fid, md)
 
 
 def write_brdf_fallback_band(h5_info, tile, band, outdir, filter_size, set_doys,
@@ -825,8 +830,9 @@ def write_brdf_fallback_band(h5_info, tile, band, outdir, filter_size, set_doys,
     quality_count = None
     
     clean_data_file = pjoin(outdir, 'clean_data_{}_{}.h5'.format(band, tile))
+    
     LOCKS[clean_data_file] = Lock()
-  
+    
     with h5py.File(clean_data_file, 'w') as clean_data:
         for key in h5_info:
             create_dataset(clean_data, key, (3, shape[0], shape[1]), {}, chunks=(1,) + data_chunks)
@@ -864,7 +870,6 @@ def write_brdf_fallback(brdf_dir, outdir, tile, year_from, year_to, filter_size,
     set_doys.remove(366)
 
     with tempfile.TemporaryDirectory() as tmp_dir:
-        tmp_dir = outdir
         for band in BAND_LIST:
             write_brdf_fallback_band(h5_info, tile, band, tmp_dir, filter_size, set_doys,
                                      pthresh=10.0, data_chunks=(240, 240), compute_chunks=(240, 240),
@@ -878,6 +883,7 @@ def write_brdf_fallback(brdf_dir, outdir, tile, year_from, year_to, filter_size,
     # symlink doy 366 to the final results of doy 365 results 
     os.symlink(os.path.join(outdir, BRDF_AVG_FILE_FMT.format(tile, 365)), 
                os.path.join(outdir, BRDF_AVG_FILE_FMT.format(tile, 366)))
+
 
 @click.command()
 @click.option('--brdf-dir', default='/g/data/v10/eoancillarydata.reS/brdf.av/MCD43A1.006/')

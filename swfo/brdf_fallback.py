@@ -76,6 +76,13 @@ def get_datetime(dt: Optional[datetime] = None):
     return dt
 
 
+DTYPE_MAIN = np.dtype([(BrdfModelParameters.ISO.value, 'int16'),
+                       (BrdfModelParameters.VOL.value, 'int16'),
+                       (BrdfModelParameters.GEO.value, 'int16')])
+DTYPE_SUPPORT = np.dtype([('AFX', 'int16'), ('RMS', 'int16')])
+DTYPE_QUALITY = np.dtype([('MASK', 'int16'), ('NUM', 'int16')])
+
+
 def albedo_band_name(band):
     """
     :param band:
@@ -886,6 +893,7 @@ def write_brdf_fallback_band(
     quality_count = None
 
     clean_data_file = pjoin(outdir, 'clean_data_{}_{}.h5'.format(band, tile))
+
     LOCKS[clean_data_file] = Lock()
 
     with h5py.File(clean_data_file, 'w') as clean_data:
@@ -940,7 +948,6 @@ def write_brdf_fallback(
     julian_days.discard(366)
 
     with tempfile.TemporaryDirectory() as tmp_dir:
-        tmp_dir = outdir
         for band in BAND_LIST:
             write_brdf_fallback_band(h5_info, tile, band, tmp_dir, filter_size, julian_days,
                                      pthresh=10.0, data_chunks=(240, 240), compute_chunks=(240, 240),

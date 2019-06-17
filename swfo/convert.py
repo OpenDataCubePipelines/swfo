@@ -313,7 +313,7 @@ def pr_wtr_cmd(indir, outdir, compression, filter_opts):
 
 @prwtr_cli.command('h5-md', help='Convert PR_WTR NetCDF files into HDF5 files with metadata entries')
 @click.option('--fname', type=click.Path(dir_okay=False, file_okay=True),
-              help='Path to hdf4 modis brdf tile')
+              help='Path to precipital water NetCDF stack.')
 @click.option('--outdir', type=click.Path(dir_okay=True, file_okay=False, writable=True),
               help='directory to output hdf5 file')
 @_compression_options

@@ -29,9 +29,9 @@ from wagl.hdf5 import attach_image_attributes
 from wagl.tiling import generate_tiles
 from wagl.constants import BrdfModelParameters
 
-from swfo import brdf_shape
-from swfo.convert import _compression_options
-from swfo.h5utils import write_h5_md, YAML
+from . import brdf_shape
+from .convert import _compression_options
+from .h5utils import write_h5_md, YAML
 
 BAND_LIST = ['Band{}'.format(band) for band in range(1, 8)]
 FALLBACK_PRODUCT_HREF = 'https://collections.dea.ga.gov.au/ga_c_m_brdfalbedo_2'
@@ -889,7 +889,8 @@ def write_brdf_fallback_band(
 
     with h5py.File(clean_data_file, 'w') as clean_data:
         for key in h5_info:
-            create_dataset(clean_data, key, (3, shape[0], shape[1]), {}, chunks=(1,) + data_chunks)
+            create_dataset(clean_data, key, (3, shape[0], shape[1]), {}, chunks=(1,) + data_chunks,
+                           compression=H5CompressionFilter.LZF, filter_opts={})
 
     with Pool(processes=nprocs) as pool:
         pool.starmap(apply_threshold,

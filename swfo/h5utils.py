@@ -3,20 +3,20 @@ Utility functions used in the conversion process to hdf5 archives
 """
 
 from typing import Optional, List, Dict, Union
-from io import StringIO, BufferedReader
+from io import BufferedReader
 import uuid
 import urllib.parse
 import hashlib
 
-from ruamel.yaml import YAML
+
+from ruamel.yaml import YAML as _YAML
+from ruamel.yaml.compat import StringIO
 import h5py
 
 VLEN_STRING = h5py.special_dtype(vlen=str)
 FALLBACK_UUID_NAMESPACE = uuid.UUID('c5908e58-7301-4054-9f04-a0fa8cdef63b')
 
-YAML_SERIALISER = YAML()
-YAML_SERIALISER.indent(mapping=2, sequence=4, offset=2)
-
+YAML = _YAML()
 
 def _get_next_md_id(h5_group: h5py.Group, group_prefix: str) -> int:
     """
@@ -61,12 +61,11 @@ def write_h5_md(
         ds = h5_group.create_dataset(
             path,
             dtype=VLEN_STRING,
-            shape=(1,),
         )
 
-        with StringIO() as _buf:
-            YAML_SERIALISER.dump(dataset, _buf)
-            ds[()] = _buf.getvalue()
+        with StringIO() as stream:
+            YAML.dump(dataset, stream)
+            ds[()] = stream.getvalue()
 
         current_path = path.rsplit('/', 1)[0] + '/CURRENT'
         if h5_group.get(current_path):

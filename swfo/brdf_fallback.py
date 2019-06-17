@@ -6,33 +6,52 @@ MODIS_BRDF_MCD43A1_Processing_v2.docx and
 BRDF_shape_parameters_and_indices.docx
 """
 
+
 import tempfile
 import os
 from os.path import join as pjoin
 import datetime
+from typing import Optional, Dict
+import uuid
+from pathlib import Path
 
 from multiprocessing import Pool as ProcessPool, Lock
 import fnmatch
 import h5py
 import numpy as np
 import click
-from pathlib import Path
 
 from wagl.hdf5.compression import H5CompressionFilter
 from wagl.hdf5 import attach_image_attributes
 from wagl.tiling import generate_tiles
 from wagl.constants import BrdfModelParameters
 
-import brdf_shape
+from . import brdf_shape
+from .h5utils import write_h5_md, YAML
 
 BAND_LIST = ['Band{}'.format(band) for band in range(1, 8)]
+FALLBACK_PRODUCT_HREF = 'https://collections.dea.ga.gov.au/ga_c_m_brdfalbedo_2'
 
 BRDF_AVG_FILE_BAND_FMT = 'MCD43A1.JLAV.006.{}.DOY.{:03}.{}.h5'
 BRDF_AVG_FILE_FMT = 'MCD43A1.JLAV.006.{}.DOY.{:03}.h5'
 BRDF_MATCH_PATTERN = '*{}.DOY.{:03}*Band*.h5'
 
-TILES = ['h29v10', 'h30v10', 'h31v10', 'h32v10', 'h27v11', 'h28v11', 'h29v11', 'h30v11',
-         'h31v11', 'h27v12', 'h28v12', 'h29v12', 'h30v12', 'h31v12', 'h28v13', 'h29v13']
+
+def get_datetime(dt: Optional[datetime.datetime] = None):
+    """
+    Returns a datetime object (defaults to utcnow) with tzinfo set to utc
+
+    :param dt:
+        (Optional) a datetime object to add utcnow to; defaults to utcnow()
+    :return:
+        A 'datetime' type with tzinfo set
+    """
+    if not dt:
+        dt = datetime.datetime.utcnow()
+    if not dt.tzinfo:
+        dt = dt.replace(tzinfo=datetime.timezone.utc)
+
+    return dt
 
 LOCKS = {}
 
@@ -658,6 +677,71 @@ def apply_convolution(filename, h5_info, window, filter_size, mask_indices):
     return data_convolved
 
 
+def generate_fallback_metadata_doc(h5info: Dict, doy: str):
+    """
+    Generates a metadata doc for a brdf fallback dataset attributes are derived
+    from the metadata of the source dataset; assume metadata reference is ga-stac-like
+    :param h5info:
+        A dictionary of day-of-year strings to h5 collection references
+    :param doy:
+        A string of the day of year being averaged for the tile
+
+    :return:
+        A metadata dictionary describing the dataset
+    """
+    def _reader(filepath: str, offset='/METADATA/CURRENT'):
+        with h5py.File(filepath, 'r') as src:
+            ds = YAML.load(src[offset][()].item())
+        return ds
+
+    metadata_doc = {
+        'id': str(uuid.uuid4()),  # Not sure what the params would be for deterministic uuid
+        'product': {'href': FALLBACK_PRODUCT_HREF},
+        'crs': None,
+        'geometry': None,  # Need to validate imagery intersection
+        'grids': None,  # Need to verify quality mask
+        'measurements': None,  # TODO
+        'lineage': {
+            'brdf_threshold': [],
+            'doy_average': [],
+        },
+        'properties': {}
+    }
+    start_ds, *_, end_ds = sorted(h5info.keys())
+
+    for datestr, fp in h5info.items():
+        src_md = _reader(fp)
+        curr_doy = datetime.datetime.strptime(datestr, '%Y.%m.%d').strftime('%j')
+        metadata_doc['lineage']['brdf_threshold'].append(src_md['id'])
+        if curr_doy == doy:
+            metadata_doc['lineage']['doy_average'].append(src_md['id'])
+
+        if not metadata_doc.get('grids', None):
+            metadata_doc['crs'] = src_md['crs']
+            metadata_doc['geometry'] = src_md['geometry']
+            metadata_doc['grids'] = src_md['grids']
+            metadata_doc['measurements'] = '???'  # Need to know the measurements
+            metadata_doc['properties'] = {
+                'dtr:start_datetime': get_datetime(
+                    datetime.datetime.strptime(start_ds, '%Y.%m.%d')).isoformat(),
+                'dtr:end_datetime': get_datetime(
+                    datetime.datetime.strptime(end_ds, '%Y.%m.%d')).isoformat(),
+                'eo:instrument': src_md['properties']['eo:instrument'],
+                'eo:platform': src_md['properties']['eo:platform'],
+                'eo:gsd': src_md['properties']['eo:gsd'],
+                'eo:epsg': src_md['properties']['eo:epsg'],
+                'item:providers': [{
+                    'name': 'Geoscience Australia',
+                    'roles': ['processor', 'host'],
+                }],
+                'odc:creation_datetime': get_datetime().isoformat(),
+                'odc:file_format': 'HDF5',
+                'odc:region_code': src_md['properties']['odc:region_code']
+            }
+
+    return metadata_doc
+
+
 def post_cleanup_process(window, set_doys, h5_info, outdir, tile, clean_data_file,
                          filter_size, band, bad_indices):
     """
@@ -678,6 +762,8 @@ def post_cleanup_process(window, set_doys, h5_info, outdir, tile, clean_data_fil
         with LOCKS[outfile]:
             with h5py.File(outfile) as fid:
                 write_chunk(filtered_data, fid, band, window=(slice(None),) + window)
+                # md = generate_fallback_metadata_doc(h5_info, doy)
+                # write_h5_md(fid, md)
 
 
 def write_brdf_fallback_band(h5_info, tile, band, outdir, filter_size, set_doys,

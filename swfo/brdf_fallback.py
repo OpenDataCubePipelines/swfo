@@ -6,7 +6,6 @@ MODIS_BRDF_MCD43A1_Processing_v2.docx and
 BRDF_shape_parameters_and_indices.docx
 """
 
-
 import os
 from os.path import join as pjoin
 from pathlib import Path
@@ -73,13 +72,6 @@ def get_datetime(dt: Optional[datetime.datetime] = None):
         dt = dt.replace(tzinfo=datetime.timezone.utc)
 
     return dt
-
-
-DTYPE_MAIN = np.dtype([(BrdfModelParameters.ISO.value, 'int16'),
-                       (BrdfModelParameters.VOL.value, 'int16'), 
-                       (BrdfModelParameters.GEO.value, 'int16')])
-DTYPE_SUPPORT = np.dtype([('AFX', 'int16'), ('RMS', 'int16')])
-DTYPE_QUALITY = np.dtype([('MASK', 'int16'), ('NUM', 'int16')])
 
 
 def albedo_band_name(band):
@@ -716,7 +708,8 @@ def apply_convolution(filename, h5_info, window, filter_size, mask_indices):
 def munge_metadata(fp, start_ds=None, end_ds=None, only_id=True): 
     """
     extracts metadata from MCD43A1 .h5 files. Returns only uuid of the 
-    h5 files or general metadata attributes if only_id is set to False. 
+    h5 files if only_id is set to True. Else general metadata attributes 
+    of the h5 file is returned. 
     """
     with h5py.File(fp, 'r') as src: 
         src_md = YAML.load(src[METADATA_OFFSET][()].item())

@@ -2,18 +2,17 @@
 Utility functions used in the conversion process to hdf5 archives
 """
 
-from typing import Optional, List, Dict, Union
-from io import BufferedReader
+from typing import Optional, List, Dict
+from io import StringIO, BufferedReader
+import os
 import uuid
 import urllib.parse
 import hashlib
 from pathlib import Path
-import os
 import tempfile
 from contextlib import contextmanager
 
 from ruamel.yaml import YAML as _YAML
-from ruamel.yaml.compat import StringIO
 import h5py
 
 
@@ -24,6 +23,9 @@ METADATA_PTR = 'CURRENT'
 METADATA_LIST_PTR = 'CURRENT-LIST'
 
 YAML = _YAML()
+VLEN_STRING = h5py.special_dtype(vlen=str)
+
+
 VLEN_STRING = h5py.special_dtype(vlen=str)
 
 
@@ -187,7 +189,6 @@ def write_h5_md(
         track_order=True
         ) -> None:
     """
-<<<<<<< HEAD
     Appends metadata documents to a h5File collection, updating
     SoftLinks in the public namespace and the metadata listing in the
     public namespace.
@@ -199,15 +200,6 @@ def write_h5_md(
     :param dataset_names:
         An array of dataset names corresponding to each of the documents;
         for a single dataset h5 collection provide '/'
-=======
-    Appends metadata documents to a hdf5 collection.
-    Variable length strings will be written to records in
-        /.METADATA/path/to/dataset_name/offset
-    A softlink will be created at:
-        /METADATA/path/to/dataset_name/CURRENT
-    An array of CURRENT metadata docs will be available at:
-        /METADATA/CURRENT-LIST
->>>>>>> Fix pylint errors for metadata-extension
     """
 
     collection_path = '/'.join((PUBLIC_NAMESPACE, METADATA_LIST_PTR))
@@ -223,15 +215,9 @@ def write_h5_md(
 
     # Create metadata and collate new references
     for i, _ in enumerate(datasets):
-<<<<<<< HEAD
         curr_ref = _write_dataset(h5_group, datasets[i], dataset_names[i], track_order=track_order)
         if curr_ref.name not in known_metadata_refs:
             new_metadata_refs.append(curr_ref.name)
-=======
-        ref = _write_dataset(h5_group, datasets[i], dataset_names[i])
-        if ref not in old_metadata_paths:
-            new_metadata_paths.append(ref)
->>>>>>> Fix pylint errors for metadata-extension
 
     if new_metadata_refs:
         # Extend the virtual layout for new datasets
@@ -240,11 +226,7 @@ def write_h5_md(
             dtype=VLEN_STRING)
 
         ds_cntr = 0
-<<<<<<< HEAD
         for ds_cntr, _ in enumerate(known_metadata_refs):
-=======
-        for ds_cntr, _ in enumerate(old_metadata_paths):
->>>>>>> Fix pylint errors for metadata-extension
             virtual_collection[ds_cntr] = h5py.VirtualSource(
                 path_or_dataset='.',
                 name=known_metadata_refs[ds_cntr],
@@ -255,11 +237,7 @@ def write_h5_md(
         if known_metadata_refs:
             ds_cntr = ds_cntr + 1
 
-<<<<<<< HEAD
         for j, _ in enumerate(new_metadata_refs):
-=======
-        for j, _ in enumerate(new_metadata_paths):
->>>>>>> Fix pylint errors for metadata-extension
             virtual_collection[ds_cntr+j] = h5py.VirtualSource(
                 path_or_dataset='.',
                 name=new_metadata_refs[j],

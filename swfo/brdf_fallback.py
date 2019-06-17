@@ -28,8 +28,8 @@ from wagl.hdf5 import attach_image_attributes
 from wagl.tiling import generate_tiles
 from wagl.constants import BrdfModelParameters
 
-from . import brdf_shape
-from .h5utils import write_h5_md, YAML
+from swfo import brdf_shape
+from swfo.h5utils import write_h5_md, YAML
 
 BAND_LIST = ['Band{}'.format(band) for band in range(1, 8)]
 FALLBACK_PRODUCT_HREF = 'https://collections.dea.ga.gov.au/ga_c_m_brdfalbedo_2'
@@ -54,6 +54,8 @@ DTYPE_MAIN = np.dtype([(BrdfModelParameters.ISO.value, 'int16'),
                        (BrdfModelParameters.GEO.value, 'int16')])
 DTYPE_SUPPORT = np.dtype([('AFX', 'int16'), ('RMS', 'int16')])
 DTYPE_QUALITY = np.dtype([('MASK', 'int16'), ('NUM', 'int16')])
+
+METADATA_OFFSET = '/METADATA/CURRENT'
 
 
 def get_datetime(dt: Optional[datetime.datetime] = None):
@@ -254,6 +256,7 @@ def get_qualityband_count_window(h5_info, band_name, window):
     data_sum = read_quality_data(h5_info[first])
 
     for key in rest:
+        print(h5_info[key])
         new_data = read_quality_data(h5_info[key])
         # https://stackoverflow.com/questions/42209838/treat-nan-as-zero-in-numpy-array-summation-except-for-nan-in-all-arrays
         data_sum_nan = np.isnan(data_sum)
@@ -412,27 +415,17 @@ def get_std_block(h5_info, band_name, param, window):
     return np.nanstd(data, axis=0, ddof=1, keepdims=False)
 
 
-def concatenate_files(infile_paths, outfile, h5_info, doy):
+def concatenate_files(infile_paths, outfile, h5_info, doy, tile_metadata):
     """
     A function to concatenate multiple h5 files
     """
     assert len(infile_paths) == 7
-
-    # TODO create dataset to store uuid for brdf_fallback provenance (use h5_info 
-    # for to id files used in  threshold generation)
-    # h5_info is a dict with key, val pairs: eg : key = '2002.01.01', 
-    # value = 'absolute path to a h5 file'. 
-
-    # if we want to store medata data for averages produced for each day of year
-    # then use following average_metadata dict, which contains the absolute path 
-    # of the files used in average brdf generation. 
-
-    # average_metadata = {key: h5_info[key] for key in h5_info if folder_doy(key) == doy}
-
-    # TODO write dataset called METADATA in outfile (final h5 files containting the 
-    # average brdf datasets for all seven MODIS bands. 
-
+    
+    # set the uuids used in processing average for given day of year
+    tile_metadata['lineage']['doy_average'] = [munge_metadata(h5_info[key]) 
+                                               for key in h5_info if folder_doy(key) == doy]
     with h5py.File(outfile, 'w') as out_fid:
+        write_h5_md(out_fid, [tile_metadata], ['/'])
         for fp in infile_paths:
             with h5py.File(fp, 'r') as in_fid:
                 for ds_band in in_fid:
@@ -720,46 +713,25 @@ def apply_convolution(filename, h5_info, window, filter_size, mask_indices):
     return data_convolved
 
 
-def generate_fallback_metadata_doc(h5info: Dict, doy: str):
+def munge_metadata(fp, start_ds=None, end_ds=None, only_id=True): 
     """
-    Generates a metadata doc for a brdf fallback dataset attributes are derived
-    from the metadata of the source dataset; assume metadata reference is ga-stac-like
-    :param h5info:
-        A dictionary of day-of-year strings to h5 collection references
-    :param doy:
-        A string of the day of year being averaged for the tile
-
-    :return:
-        A metadata dictionary describing the dataset
+    extracts metadata from MCD43A1 .h5 files. Returns only uuid of the 
+    h5 files or general metadata attributes if only_id is set to False. 
     """
-    def _reader(filepath: str, offset='/METADATA/CURRENT'):
-        with h5py.File(filepath, 'r') as src:
-            ds = YAML.load(src[offset][()].item())
-        return ds
-
-    metadata_doc = {
-        'id': str(uuid.uuid4()),  # Not sure what the params would be for deterministic uuid
-        'product': {'href': FALLBACK_PRODUCT_HREF},
-        'crs': None,
-        'geometry': None,  # Need to validate imagery intersection
-        'grids': None,  # Need to verify quality mask
-        'measurements': None,  # TODO
-        'lineage': {
-            'brdf_threshold': [],
-            'doy_average': [],
-        },
-        'properties': {}
-    }
-    start_ds, *_, end_ds = sorted(h5info.keys())
-
-    for datestr, fp in h5info.items():
-        src_md = _reader(fp)
-        curr_doy = datetime.datetime.strptime(datestr, '%Y.%m.%d').strftime('%j')
-        metadata_doc['lineage']['brdf_threshold'].append(src_md['id'])
-        if curr_doy == doy:
-            metadata_doc['lineage']['doy_average'].append(src_md['id'])
-
-        if not metadata_doc.get('grids', None):
+    with h5py.File(fp, 'r') as src: 
+        src_md = YAML.load(src[METADATA_OFFSET][()].item())
+        
+        if only_id: 
+            return src_md['id']
+        else:
+            metadata_doc = { 
+                'id': str(uuid.uuid4()),  # Not sure what the params would be for deterministic uuid
+                'product': {'href': FALLBACK_PRODUCT_HREF},
+                'lineage': {
+                'brdf_threshold': [],
+                'doy_average': []
+                }
+            }
             metadata_doc['crs'] = src_md['crs']
             metadata_doc['geometry'] = src_md['geometry']
             metadata_doc['grids'] = src_md['grids']
@@ -781,8 +753,7 @@ def generate_fallback_metadata_doc(h5info: Dict, doy: str):
                 'odc:file_format': 'HDF5',
                 'odc:region_code': src_md['properties']['odc:region_code']
             }
-
-    return metadata_doc
+            return metadata_doc
 
 
 def post_cleanup_process(window, set_doys, h5_info, outdir, tile, clean_data_file,
@@ -868,31 +839,45 @@ def write_brdf_fallback(brdf_dir, outdir, tile, year_from, year_to, filter_size,
     
     # remove doy 366 from further processing, final results for 366 will be symlinked to doy 365
     set_doys.remove(366)
-
+    
     with tempfile.TemporaryDirectory() as tmp_dir:
+        
         for band in BAND_LIST:
             write_brdf_fallback_band(h5_info, tile, band, tmp_dir, filter_size, set_doys,
                                      pthresh=10.0, data_chunks=(240, 240), compute_chunks=(240, 240),
                                      nprocs=nprocs, compression=compression)
+<<<<<<< ab65ddf285d7cf6628baa16f0563fc8218074ff3
+=======
+        
+        start_ds, *_, end_ds = sorted(h5_info.keys())
+        tile_metadata = munge_metadata(h5_info[start_ds], start_ds, end_ds, only_id=False)
+        
+        with Pool(processes=nprocs) as pool: 
+            ids_brdf = pool.starmap(munge_metadata, [(fp, start_ds, end_ds) for key, fp in h5_info.items()])
+        
+        tile_metadata['lineage']['brdf_threshold'] = ids_brdf
+        
+>>>>>>> writing metadata for final brdf average files
         with Pool(processes=nprocs) as pool: 
             pool.starmap(concatenate_files, [([str(fp) for fp in Path(tmp_dir).rglob(BRDF_MATCH_PATTERN
                                                                                      .format(tile, doy))],
                                               os.path.join(outdir, BRDF_AVG_FILE_FMT.format(tile, doy)),
-                                              h5_info, doy) for doy in set_doys])
+                                              h5_info, doy, tile_metadata) for doy in set_doys])
     
     # symlink doy 366 to the final results of doy 365 results 
-    os.symlink(os.path.join(outdir, BRDF_AVG_FILE_FMT.format(tile, 365)), 
-               os.path.join(outdir, BRDF_AVG_FILE_FMT.format(tile, 366)))
+    os.symlink(pjoin(outdir, BRDF_AVG_FILE_FMT.format(tile, 365)), 
+               pjoin(outdir, BRDF_AVG_FILE_FMT.format(tile, 366)))
+
 
 
 @click.command()
 @click.option('--brdf-dir', default='/g/data/v10/eoancillarydata.reS/brdf.av/MCD43A1.006/')
-@click.option('--outdir', default='/g/data/u46/users/pd1813/BRDF_PARAM/test_struct')
+@click.option('--outdir', default='/g/data/u46/users/pd1813/BRDF_PARAM/test_v32')
 @click.option('--tile', default='h29v12')
-@click.option('--year-from', default=2002)
-@click.option('--year-to', default=2018)
+@click.option('--year-from', default=2008)
+@click.option('--year-to', default=2008)
 @click.option('--filter-size', default=22)
-@click.option('--nprocs', default=mp.cpu_count()-20)
+@click.option('--nprocs', default=mp.cpu_count()-1)
 @click.option('--compression', default=H5CompressionFilter.BLOSC_ZSTANDARD)
 def main(brdf_dir, outdir, tile, year_from, year_to, filter_size, nprocs, compression):
     write_brdf_fallback(brdf_dir, outdir, tile, year_from, year_to, filter_size, nprocs, compression)

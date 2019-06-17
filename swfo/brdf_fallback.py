@@ -6,7 +6,6 @@ MODIS_BRDF_MCD43A1_Processing_v2.docx and
 BRDF_shape_parameters_and_indices.docx
 """
 
-
 import os
 from os.path import join as pjoin
 from pathlib import Path

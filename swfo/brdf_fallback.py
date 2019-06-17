@@ -58,6 +58,8 @@ DTYPE_MAIN = np.dtype([(BrdfModelParameters.ISO.value, 'int16'),
 DTYPE_SUPPORT = np.dtype([('AFX', 'int16'), ('RMS', 'int16')])
 DTYPE_QUALITY = np.dtype([('MASK', 'int16'), ('NUM', 'int16')])
 
+METADATA_OFFSET = '/METADATA/CURRENT'
+
 
 def get_datetime(dt: Optional[datetime] = None):
     """
@@ -74,13 +76,6 @@ def get_datetime(dt: Optional[datetime] = None):
         dt = dt.replace(tzinfo=timezone.utc)
 
     return dt
-
-
-DTYPE_MAIN = np.dtype([(BrdfModelParameters.ISO.value, 'int16'),
-                       (BrdfModelParameters.VOL.value, 'int16'),
-                       (BrdfModelParameters.GEO.value, 'int16')])
-DTYPE_SUPPORT = np.dtype([('AFX', 'int16'), ('RMS', 'int16')])
-DTYPE_QUALITY = np.dtype([('MASK', 'int16'), ('NUM', 'int16')])
 
 
 def albedo_band_name(band):
@@ -166,7 +161,7 @@ def hdf5_files(
     :param start_date:
         A datetime.date type: the date from where processing should begin from.
         Default = None, will not filter by start_date.
-    :param start_date:
+    :param end_date:
         A datetime.date type: the date from where processing should end.
         Default = None, will not filter by end_date.
     :return:
@@ -420,19 +415,21 @@ def get_std_block(h5_info, band_name, param, window):
     return np.nanstd(data, axis=0, ddof=1, keepdims=False)
 
 
-def concatenate_files(infile_paths, outfile, h5_info, doy):
+def concatenate_files(infile_paths, outfile, h5_info, doy, tile_metadata):
     """
     A function to concatenate multiple h5 files and append metadata information.
     """
     assert len(infile_paths) == 7
 
+    # set the uuids used in processing average for given day of year
+    tile_metadata['lineage']['doy_average'] = [munge_metadata(h5_info[key])
+                                               for key in h5_info if folder_doy(key) == doy]
     with h5py.File(outfile, 'w') as out_fid:
         for fp in infile_paths:
             with h5py.File(fp, 'r') as in_fid:
                 for ds_band in in_fid:
                     in_fid.copy(source=ds_band, dest=out_fid)
-        md = generate_fallback_metadata_doc(h5_info, doy)
-        write_h5_md(out_fid, md)
+        write_h5_md(out_fid, [tile_metadata], ['/'])
 
 
 def generate_windows(shape: Iterable[int], compute_chunks: Iterable[int]) -> Iterable[Iterable[int]]:
@@ -548,7 +545,7 @@ def create_brdf_datasets(
 def write_chunk(data_dict, fid, band, window):
     """
     write numpy array to to h5 files with user supplied attributes
-    and compression
+    and compression.
     """
     assert len(data_dict) == 1
 
@@ -767,46 +764,25 @@ def _get_measurement_info() -> Dict:
     return measurements
 
 
-def generate_fallback_metadata_doc(h5info: Dict, doy: str):
+def munge_metadata(fp, start_ds=None, end_ds=None, only_id=True): 
     """
-    Generates a metadata doc for a brdf fallback dataset attributes are derived
-    from the metadata of the source dataset; assume metadata reference is ga-stac-like
-    :param h5info:
-        A dictionary of day-of-year strings to h5 collection references
-    :param doy:
-        A string of the day of year being averaged for the tile
-
-    :return:
-        A metadata dictionary describing the dataset
+    extracts metadata from MCD43A1 .h5 files. Returns only uuid of the
+    h5 files or general metadata attributes if only_id is set to False.
     """
-    def _reader(filepath: str, offset='/METADATA/CURRENT'):
-        with h5py.File(filepath, 'r') as src:
-            ds = YAML.load(src[offset][()].item())
-        return ds
+    with h5py.File(fp, 'r') as src:
+        src_md = YAML.load(src[METADATA_OFFSET][()].item())
 
-    metadata_doc = {
-        'id': None,
-        'product': {'href': FALLBACK_PRODUCT_HREF},
-        'crs': None,
-        'geometry': None,
-        'grids': None,
-        'measurements': _get_measurement_info(),
-        'lineage': {
-            'brdf_threshold': [],
-            'doy_average': [],
-        },
-        'properties': {}
-    }
-    start_ds, *_, end_ds = sorted(h5info.keys())
-
-    for datestr, fp in h5info.items():
-        src_md = _reader(fp)
-        curr_doy = datetime.strptime(datestr, '%Y.%m.%d').strftime('%j')
-        metadata_doc['lineage']['brdf_threshold'].append(src_md['id'])
-        if curr_doy == doy:
-            metadata_doc['lineage']['doy_average'].append(src_md['id'])
-
-        if not metadata_doc.get('grids', None):
+        if only_id:
+            return src_md['id']
+        else:
+            metadata_doc = { 
+                'id': str(uuid.uuid4()),  # Not sure what the params would be for deterministic uuid
+                'product': {'href': FALLBACK_PRODUCT_HREF},
+                'lineage': {
+                'brdf_threshold': [],
+                'doy_average': []
+                }
+            }
             metadata_doc['crs'] = src_md['crs']
             metadata_doc['geometry'] = src_md['geometry']
             metadata_doc['grids'] = src_md['grids']
@@ -827,12 +803,6 @@ def generate_fallback_metadata_doc(h5info: Dict, doy: str):
                 'odc:file_format': 'HDF5',
                 'odc:region_code': src_md['properties']['odc:region_code']
             }
-    metadata_doc['id'] = str(uuid.uuid5(
-        FALLBACK_NAMESPACE,
-        FALLBACK_PRODUCT_HREF + '&' + urllib.parse.urlencode(
-            metadata_doc['lineage']
-        )
-    ))
 
     return metadata_doc
 
@@ -946,8 +916,9 @@ def write_brdf_fallback(
 
     # Day 365 will be used to represent the leap day
     julian_days.discard(366)
-
+    
     with tempfile.TemporaryDirectory() as tmp_dir:
+        
         for band in BAND_LIST:
             write_brdf_fallback_band(h5_info, tile, band, tmp_dir, filter_size, julian_days,
                                      pthresh=10.0, data_chunks=(240, 240), compute_chunks=(240, 240),

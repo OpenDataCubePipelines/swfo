@@ -890,7 +890,7 @@ def write_brdf_fallback_band(
                        clean_data_file, filter_size, band, bad_indices)
                       for window in generate_windows(shape, compute_chunks)])
 
-    # os.remove(clean_data_file)
+    os.remove(clean_data_file)
 
 
 def write_brdf_fallback(
@@ -917,13 +917,21 @@ def write_brdf_fallback(
     julian_days.discard(366)
     
     with tempfile.TemporaryDirectory() as tmp_dir:
-        
         for band in BAND_LIST:
             write_brdf_fallback_band(h5_info, tile, band, tmp_dir, filter_size, julian_days,
                                      pthresh=10.0, data_chunks=(240, 240), compute_chunks=(240, 240),
                                      nprocs=nprocs, compression=compression, filter_opts=filter_opts)
 
-        with Pool(processes=nprocs) as pool:
+        # get metadata for a tile 
+        start_ds, *_, end_ds = sorted(h5_info.keys())
+        tile_metadata = munge_metadata(h5_info[start_ds], start_ds, end_ds, only_id=False)
+        
+        with Pool(processes=nprocs) as pool: 
+            ids_brdf = pool.starmap(munge_metadata, [(fp, start_ds, end_ds) for key, fp in h5_info.items()])
+        
+        tile_metadata['lineage']['brdf_threshold'] = ids_brdf
+        
+        with Pool(processes=nprocs) as pool: 
             pool.starmap(concatenate_files, [([str(fp) for fp in Path(tmp_dir).rglob(BRDF_MATCH_PATTERN
                                                                                      .format(tile, doy))],
                                               os.path.join(outdir, BRDF_AVG_FILE_FMT.format(tile, doy)),

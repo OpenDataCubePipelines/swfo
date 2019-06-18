@@ -12,9 +12,8 @@ from pathlib import Path
 
 import tempfile
 import datetime
-import multiprocessing as mp
 from multiprocessing import Pool as ProcessPool, Lock 
-from typing import Optional, Dict
+from typing import Optional
 import uuid
 
 import fnmatch
@@ -125,6 +124,8 @@ def folder_year(folder):
 
 
 def shape_of_window(window):
+    """ returns a shape from a window. """ 
+
     y_shape = window[0].stop - window[0].start
     x_shape = window[1].stop - window[1].start
     return (y_shape, x_shape)
@@ -208,7 +209,7 @@ def read_brdf_quality_dataset(ds, window=None):
     return data
 
 
-def read_brdf_dataset(ds, param,  window=None):
+def read_brdf_dataset(ds, param, window=None):
     """
     :param ds:
         A 'file object' type: hdf5 file object containing the BRDF data set
@@ -239,6 +240,8 @@ def read_brdf_dataset(ds, param,  window=None):
 
     
 def get_qualityband_count_window(h5_info, band_name, window):
+    """ returns sum of good quality data count per pixels for a window. """
+
     def read_quality_data(filename):
         with h5py.File(filename, 'r') as fid:
             return 1. - read_brdf_quality_dataset(fid[band_name], window)
@@ -395,7 +398,7 @@ def get_std_block(h5_info, band_name, param, window):
 
     data = np.zeros((len(h5_info),) + shape_of_window(window), dtype='float32')
     for layer, filename in enumerate(h5_info.values()):
-        data[layer] = __get_data(filename, param,  window)
+        data[layer] = __get_data(filename, param, window)
 
     run_median = np.nanmedian(data, axis=0, keepdims=False)
 
@@ -424,6 +427,7 @@ def concatenate_files(infile_paths, outfile, h5_info, doy, tile_metadata):
 
 
 def generate_windows(shape, compute_chunks):
+    """ generates a window of height and width equivalent to compute_chunk's shape. """ 
     for x, y in generate_tiles(shape[0], shape[1], compute_chunks[0], compute_chunks[1]):
         yield (slice(*y), slice(*x))
 
@@ -462,6 +466,8 @@ def calculate_thresholds(h5_info, band_name, shape, compute_chunks, nprocs=None)
 def create_dataset(group, band_name, shape, attrs,
                    dtype=np.int16, chunks=(240, 240), filter_opts=None,
                    compression=H5CompressionFilter.BLOSC_ZSTANDARD):
+    """ creates dataset and attaches attributes for h5 object. """
+
     if filter_opts is None:
         filter_opts = {}
     else:
@@ -481,6 +487,7 @@ def create_dataset(group, band_name, shape, attrs,
 def create_brdf_datasets(group, band_name, shape, common_attrs,
                          chunks=(240, 240), filter_opts=None,
                          compression=H5CompressionFilter.BLOSC_ZSTANDARD):
+    """ creates brdf dataset for brdf parameters. """
 
     attrs = dict(scale_factor=SCALE_FACTOR, add_offset=0,
                  _FillValue=NODATA,
@@ -512,24 +519,23 @@ def create_brdf_datasets(group, band_name, shape, common_attrs,
 def write_chunk(data_dict, fid, band, window):
     """
     write numpy array to to h5 files with user supplied attributes
-    and compression
+    and compression.
     """
     assert len(data_dict) == 1
     
     key = list(data_dict.keys())[0]
     shape = shape_of_window(window)
-
    
     data_main = np.ndarray(shape, dtype=DTYPE_MAIN)
     for band_name in DTYPE_MAIN.names: 
         data = data_dict[key][band_name]
         data_main[band_name] = np.rint(data_dict[key][band_name] 
-                                         * INV_SCALE_FACTOR).filled(fill_value=NODATA).astype('int16')
+                                       * INV_SCALE_FACTOR).filled(fill_value=NODATA).astype('int16')
                                          
     data_support = np.ndarray(shape, dtype=DTYPE_SUPPORT)
     for band_name in DTYPE_SUPPORT.names: 
         data_support[band_name] = np.rint(data_dict[key][band_name]
-                                                  * INV_SCALE_FACTOR).filled(fill_value=NODATA).astype('int16')
+                                          * INV_SCALE_FACTOR).filled(fill_value=NODATA).astype('int16')
 
     data_quality = np.ndarray(shape, dtype=DTYPE_QUALITY)
     for band_name in DTYPE_QUALITY.names: 
@@ -541,6 +547,8 @@ def write_chunk(data_dict, fid, band, window):
 
 
 def get_band_info(h5_info, band_name):
+    """ returns shape and h5 attributes. """ 
+
     for date in h5_info:
         with h5py.File(h5_info[date], 'r') as fid:
             ds = fid[band_name]
@@ -604,7 +612,7 @@ def apply_threshold(clean_data_file, h5_info, band_name, window, filter_size, th
         for date in all_data_keys[start_idx:end_idx]:
             if date not in data_dict:
                 data_dict[date] = np.ma.masked_invalid(np.array([get_albedo_data(h5_info[date], param.value, window) 
-                                                                for param in BrdfModelParameters]))
+                                                                 for param in BrdfModelParameters]))
 
         # clean up the data we don't need anymore
         for date in list(data_dict):
@@ -715,37 +723,37 @@ def munge_metadata(fp, start_ds=None, end_ds=None, only_id=True):
         
         if only_id: 
             return src_md['id']
-        else:
-            metadata_doc = { 
-                'id': str(uuid.uuid4()),  # Not sure what the params would be for deterministic uuid
-                'product': {'href': FALLBACK_PRODUCT_HREF},
-                'lineage': {
+        
+        metadata_doc = { 
+            'id': str(uuid.uuid4()),  # Not sure what the params would be for deterministic uuid
+            'product': {'href': FALLBACK_PRODUCT_HREF},
+            'lineage': {
                 'brdf_threshold': [],
                 'doy_average': []
                 }
-            }
-            metadata_doc['crs'] = src_md['crs']
-            metadata_doc['geometry'] = src_md['geometry']
-            metadata_doc['grids'] = src_md['grids']
-            metadata_doc['measurements'] = '???'  # Need to know the measurements
-            metadata_doc['properties'] = {
-                'dtr:start_datetime': get_datetime(
-                    datetime.datetime.strptime(start_ds, '%Y.%m.%d')).isoformat(),
-                'dtr:end_datetime': get_datetime(
-                    datetime.datetime.strptime(end_ds, '%Y.%m.%d')).isoformat(),
-                'eo:instrument': src_md['properties']['eo:instrument'],
-                'eo:platform': src_md['properties']['eo:platform'],
-                'eo:gsd': src_md['properties']['eo:gsd'],
-                'eo:epsg': src_md['properties']['eo:epsg'],
-                'item:providers': [{
-                    'name': 'Geoscience Australia',
-                    'roles': ['processor', 'host'],
-                }],
-                'odc:creation_datetime': get_datetime().isoformat(),
-                'odc:file_format': 'HDF5',
-                'odc:region_code': src_md['properties']['odc:region_code']
-            }
-            return metadata_doc
+        }
+        metadata_doc['crs'] = src_md['crs']
+        metadata_doc['geometry'] = src_md['geometry']
+        metadata_doc['grids'] = src_md['grids']
+        metadata_doc['measurements'] = '???'  # Need to know the measurements
+        metadata_doc['properties'] = {
+            'dtr:start_datetime': get_datetime(
+                datetime.datetime.strptime(start_ds, '%Y.%m.%d')).isoformat(),
+            'dtr:end_datetime': get_datetime(
+                datetime.datetime.strptime(end_ds, '%Y.%m.%d')).isoformat(),
+            'eo:instrument': src_md['properties']['eo:instrument'],
+            'eo:platform': src_md['properties']['eo:platform'],
+            'eo:gsd': src_md['properties']['eo:gsd'],
+            'eo:epsg': src_md['properties']['eo:epsg'],
+            'item:providers': [{
+                'name': 'Geoscience Australia',
+                'roles': ['processor', 'host'],
+            }],
+            'odc:creation_datetime': get_datetime().isoformat(),
+            'odc:file_format': 'HDF5',
+            'odc:region_code': src_md['properties']['odc:region_code']
+        }
+        return metadata_doc
 
 
 def post_cleanup_process(window, set_doys, h5_info, outdir, tile, clean_data_file,
@@ -830,7 +838,7 @@ def write_brdf_fallback(brdf_dir, outdir, tile, year_from, year_to, filter_size,
     set_doys = sorted(set(folder_doy(item) for item in h5_info))
     
     # remove doy 366 from further processing, final results for 366 will be symlinked to doy 365
-    set_doys.remove(366)
+    set_doys.discard(366)
     
     with tempfile.TemporaryDirectory() as tmp_dir:
         for band in BAND_LIST:
@@ -871,9 +879,11 @@ def write_brdf_fallback(brdf_dir, outdir, tile, year_from, year_to, filter_size,
 @click.option('--filter-size', default=22)
 @click.option('--nprocs', default=27)
 @click.option('--compression', default=H5CompressionFilter.BLOSC_ZSTANDARD)
-def main(brdf_dir, outdir, tile, year_from, year_to, filter_size, nprocs, compression):
+def main(brdf_dir, outdir, tile, year_from, year_to, filter_size, nprocs, compression): 
+    """ main function to execute brdf fallback computation for a MODIS tile. """
+
     write_brdf_fallback(brdf_dir, outdir, tile, year_from, year_to, filter_size, nprocs, compression)
 
 
 if __name__ == "__main__":
-    main()
+    main() # pylint: disable=no-value-for-parameter

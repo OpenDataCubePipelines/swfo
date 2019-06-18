@@ -248,7 +248,6 @@ def get_qualityband_count_window(h5_info, band_name, window):
     data_sum = read_quality_data(h5_info[first])
 
     for key in rest:
-        print(h5_info[key])
         new_data = read_quality_data(h5_info[key])
         # https://stackoverflow.com/questions/42209838/treat-nan-as-zero-in-numpy-array-summation-except-for-nan-in-all-arrays
         data_sum_nan = np.isnan(data_sum)
@@ -820,7 +819,7 @@ def write_brdf_fallback_band(h5_info, tile, band, outdir, filter_size, set_doys,
                        clean_data_file, filter_size, band, bad_indices)
                       for window in generate_windows(shape, compute_chunks)])
 
-    # os.remove(clean_data_file)
+    os.remove(clean_data_file)
 
 
 def write_brdf_fallback(brdf_dir, outdir, tile, year_from, year_to, filter_size, nprocs, compression):
@@ -834,7 +833,6 @@ def write_brdf_fallback(brdf_dir, outdir, tile, year_from, year_to, filter_size,
     set_doys.remove(366)
     
     with tempfile.TemporaryDirectory() as tmp_dir:
-        
         for band in BAND_LIST:
             write_brdf_fallback_band(h5_info, tile, band, tmp_dir, filter_size, set_doys,
                                      pthresh=10.0, data_chunks=(240, 240), compute_chunks=(240, 240),
@@ -842,6 +840,7 @@ def write_brdf_fallback(brdf_dir, outdir, tile, year_from, year_to, filter_size,
 <<<<<<< ab65ddf285d7cf6628baa16f0563fc8218074ff3
 =======
         
+        # get metadata for a tile 
         start_ds, *_, end_ds = sorted(h5_info.keys())
         tile_metadata = munge_metadata(h5_info[start_ds], start_ds, end_ds, only_id=False)
         
@@ -864,13 +863,13 @@ def write_brdf_fallback(brdf_dir, outdir, tile, year_from, year_to, filter_size,
 
 
 @click.command()
-@click.option('--brdf-dir', default='/g/data/v10/eoancillarydata.reS/brdf.av/MCD43A1.006/')
-@click.option('--outdir', default='/g/data/u46/users/pd1813/BRDF_PARAM/test_v32')
+@click.option('--brdf-dir', default='<input-brdf-directory>')
+@click.option('--outdir', default='<output-result-directory>')
 @click.option('--tile', default='h29v12')
-@click.option('--year-from', default=2008)
-@click.option('--year-to', default=2008)
+@click.option('--year-from', default=2002)
+@click.option('--year-to', default=2018)
 @click.option('--filter-size', default=22)
-@click.option('--nprocs', default=mp.cpu_count()-1)
+@click.option('--nprocs', default=27)
 @click.option('--compression', default=H5CompressionFilter.BLOSC_ZSTANDARD)
 def main(brdf_dir, outdir, tile, year_from, year_to, filter_size, nprocs, compression):
     write_brdf_fallback(brdf_dir, outdir, tile, year_from, year_to, filter_size, nprocs, compression)

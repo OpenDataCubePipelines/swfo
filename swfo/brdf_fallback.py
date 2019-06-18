@@ -118,6 +118,8 @@ def folder_doy(folder):
 
 
 def shape_of_window(window):
+    """ returns a shape from a window. """ 
+
     y_shape = window[0].stop - window[0].start
     x_shape = window[1].stop - window[1].start
     return (y_shape, x_shape)
@@ -241,6 +243,7 @@ def get_qualityband_count_window(
         h5_info: Dict,
         band_name: str,
         window: Iterable[Iterable[int]]):
+    """ returns sum of good quality data count per pixels for a window. """
 
     def read_quality_data(filename: str):
         with h5py.File(filename, 'r') as fid:
@@ -433,7 +436,7 @@ def concatenate_files(infile_paths, outfile, h5_info, doy, tile_metadata):
 
 def generate_windows(shape: Iterable[int], compute_chunks: Iterable[int]) -> Iterable[Iterable[int]]:
     """
-    Provides an iterable over shape subsetting to a size of at most compute chunk
+    Generates a window of height and width equivalent to compute_chunk's shape.
 
     :param shape:
         Total size to iterate over
@@ -488,6 +491,7 @@ def create_dataset(
         chunks: Iterable[int] = (240, 240),
         compression: H5CompressionFilter = H5CompressionFilter.LZF,
         filter_opts: Optional[Dict] = None):
+    """ creates dataset and attaches attributes for h5 object. """
 
     if filter_opts is None:
         filter_opts = {}
@@ -513,6 +517,7 @@ def create_brdf_datasets(
         chunks: Iterable[int] = (240, 240),
         compression: H5CompressionFilter = H5CompressionFilter.LZF,
         filter_opts: Optional[Dict] = None):
+    """ creates brdf dataset for brdf parameters. """
 
     attrs = dict(scale_factor=SCALE_FACTOR, add_offset=0,
                  _FillValue=NODATA,
@@ -773,35 +778,36 @@ def munge_metadata(fp, start_ds=None, end_ds=None, only_id=True):
 
         if only_id:
             return src_md['id']
-        else:
-            metadata_doc = { 
-                'id': str(uuid.uuid4()),  # Not sure what the params would be for deterministic uuid
-                'product': {'href': FALLBACK_PRODUCT_HREF},
-                'lineage': {
+        
+        metadata_doc = { 
+            'id': str(uuid.uuid4()),  # Not sure what the params would be for deterministic uuid
+            'product': {'href': FALLBACK_PRODUCT_HREF},
+            'lineage': {
                 'brdf_threshold': [],
                 'doy_average': []
-                }
             }
-            metadata_doc['crs'] = src_md['crs']
-            metadata_doc['geometry'] = src_md['geometry']
-            metadata_doc['grids'] = src_md['grids']
-            metadata_doc['properties'] = {
-                'dtr:start_datetime': get_datetime(
-                    datetime.strptime(start_ds, '%Y.%m.%d')).isoformat(),
-                'dtr:end_datetime': get_datetime(
-                    datetime.strptime(end_ds, '%Y.%m.%d')).isoformat(),
-                'eo:instrument': src_md['properties']['eo:instrument'],
-                'eo:platform': src_md['properties']['eo:platform'],
-                'eo:gsd': src_md['properties']['eo:gsd'],
-                'eo:epsg': src_md['properties']['eo:epsg'],
-                'item:providers': [{
-                    'name': 'Geoscience Australia',
-                    'roles': ['processor', 'host'],
-                }],
-                'odc:creation_datetime': get_datetime().isoformat(),
-                'odc:file_format': 'HDF5',
-                'odc:region_code': src_md['properties']['odc:region_code']
-            }
+        }
+        metadata_doc['crs'] = src_md['crs']
+        metadata_doc['geometry'] = src_md['geometry']
+        metadata_doc['grids'] = src_md['grids']
+        metadata_doc['measurements'] = '???'  # Need to know the measurements
+        metadata_doc['properties'] = {
+            'dtr:start_datetime': get_datetime(
+                datetime.strptime(start_ds, '%Y.%m.%d')).isoformat(),
+            'dtr:end_datetime': get_datetime(
+                datetime.strptime(end_ds, '%Y.%m.%d')).isoformat(),
+            'eo:instrument': src_md['properties']['eo:instrument'],
+            'eo:platform': src_md['properties']['eo:platform'],
+            'eo:gsd': src_md['properties']['eo:gsd'],
+            'eo:epsg': src_md['properties']['eo:epsg'],
+            'item:providers': [{
+                'name': 'Geoscience Australia',
+                'roles': ['processor', 'host'],
+            }],
+            'odc:creation_datetime': get_datetime().isoformat(),
+            'odc:file_format': 'HDF5',
+            'odc:region_code': src_md['properties']['odc:region_code']
+        }
 
     return metadata_doc
 

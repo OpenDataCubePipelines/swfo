@@ -6,7 +6,6 @@ A quick (temporary) script for mosaicing the JAXA DSM for testing
 purposes within wagl (which assumes a mosaic).
 """
 
-from posixpath import join as ppjoin
 from pathlib import Path
 from subprocess import check_call
 import tarfile
@@ -29,8 +28,9 @@ GDAL_PREFIX = '/vsitar/{}'
 PRODUCT_HREF = 'https://collections.dea.ga.gov.au/ga_c_c_dsm_1'
 
 
-def convert_file(fname: Path, out_h5: h5py.Group, group_name='/',
-                 dataset_name='dataset', compression=H5CompressionFilter.LZF,
+def convert_file(fname: Path, out_h5: h5py.Group,
+                 out_dataset_path: str = 'SWFO-DSM',
+                 compression=H5CompressionFilter.LZF,
                  filter_opts=None, attrs=None):
     """
     Convert generic single band image file to HDF5.
@@ -95,8 +95,7 @@ def convert_file(fname: Path, out_h5: h5py.Group, group_name='/',
         kwargs['shape'] = (ds.height, ds.width)
         kwargs['dtype'] = ds.dtypes[0]
 
-        dataset_name = ppjoin(group_name, dataset_name)
-        dataset = out_h5.create_dataset(dataset_name, **kwargs)
+        dataset = out_h5.create_dataset(out_dataset_path, **kwargs)
         attach_image_attributes(dataset, attrs)
 
         # process each tile
@@ -114,7 +113,7 @@ def convert_file(fname: Path, out_h5: h5py.Group, group_name='/',
             ))
         }
 
-    return [metadata], [dataset_name]
+    return [metadata], [out_dataset_path]
 
 
 def jaxa_buildvrt(indir, outdir):
@@ -180,7 +179,7 @@ def jaxa_buildvrt(indir, outdir):
             check_call(cmd)
 
 
-def jaxa_tile(fname: Path, out_h5: h5py.Group,
+def jaxa_tile(fname: Path, out_h5: h5py.Group, out_dataset_prefix: str = '/',
               compression=H5CompressionFilter.LZF, filter_opts=None):
     """
     Convert a JAXA DSM .tar.gz file into a HDF5 file.
@@ -191,18 +190,19 @@ def jaxa_tile(fname: Path, out_h5: h5py.Group,
         for member in targz.getmembers():
             # only process TIFF's
             if member.name.endswith('.tif'):
+                tz_name = Path(member.name)
 
                 # define HDF5 Dataset name
-                name = Path(member.name)
-                ds_name = name.parent.joinpath(name.stem)
+                name = Path(out_dataset_prefix).joinpath(
+                    tz_name.parent, tz_name.stem)
 
                 # rasterio tar filename format
-                raster_fname = RASTERIO_PREFIX.format(fname, name)
+                raster_fname = RASTERIO_PREFIX.format(fname, tz_name)
 
                 # convert
                 _md, _ds = convert_file(
-                    raster_fname, out_h5, dataset_name=ds_name,
+                    raster_fname, out_h5, out_dataset_path=name,
                     compression=compression, filter_opts=filter_opts)
-                metadata.append(_md)
-                dataset_names.append(_ds)
+                metadata.extend(_md)
+                dataset_names.extend(_ds)
     return metadata, dataset_names

@@ -1,9 +1,13 @@
-import h5py
-import numpy as np
 from contextlib import contextmanager
+from pathlib import Path
+import os
+
+import numpy as np
+import h5py
 
 from swfo.h5utils import (
     _get_next_md_id,
+    atomic_h5_write,
     write_h5_md,
     PUBLIC_NAMESPACE,
     PRIVATE_NAMESPACE,
@@ -22,7 +26,8 @@ def _in_memory_h5(tmp_path):
             name=tmp_path / 'test_file.h5',
             driver='core',
             backing_store=False
-            ) as test_file:
+        ) as test_file:
+
         yield test_file
 
 
@@ -42,11 +47,10 @@ def test_get_next_id(tmp_path):
 
         # Test getting next id
         h5file.create_dataset(
-            name='/'.join((PRIVATE_NAMESPACE, '1')),
+            name=os.path.join('/', PRIVATE_NAMESPACE, '1'),
             data=np.empty(shape=(1,))
         )
 
-        h5file.visit(print)
         second_id = _get_next_md_id(h5file, PRIVATE_NAMESPACE)
         assert second_id == 2
 
@@ -66,10 +70,10 @@ class TestH5Write:
 
         with _in_memory_h5(tmp_path) as h5file:
             write_h5_md(h5file, datasets=sample_md, dataset_names=dataset_names)
-            virtual_collection = h5file['/'.join((PUBLIC_NAMESPACE, METADATA_LIST_PTR))]
+            virtual_collection = h5file[os.path.join('/', PUBLIC_NAMESPACE, METADATA_LIST_PTR)]
 
-            for i in range(len(dataset_names)):
-                path = '/'.join((PRIVATE_NAMESPACE, dataset_names[i]))
+            for i, _ in enumerate(dataset_names):
+                path = os.path.join('/', PRIVATE_NAMESPACE, dataset_names[i])
 
                 read_dataset = h5file.get(path + '/1')
                 assert read_dataset is not None
@@ -78,7 +82,7 @@ class TestH5Write:
 
                 assert doc == sample_md[i]
 
-                public_ref = '/'.join((PUBLIC_NAMESPACE, dataset_names[i], METADATA_PTR))
+                public_ref = os.path.join('/', PUBLIC_NAMESPACE, dataset_names[i], METADATA_PTR)
                 assert read_dataset == h5file.get(public_ref)
 
                 assert (
@@ -97,11 +101,11 @@ class TestH5Write:
         sample_md = [
             {'id': 2}
         ]
-        public_path = '/'.join((PUBLIC_NAMESPACE, METADATA_PTR))
+        public_path = os.path.join('/', PUBLIC_NAMESPACE, METADATA_PTR)
 
         with h5py.File(h5fp, 'w') as h5file:
             write_h5_md(h5file, datasets=sample_md, dataset_names=['/'])
-            virtual_collection = h5file['/'.join((PUBLIC_NAMESPACE, METADATA_LIST_PTR))]
+            virtual_collection = h5file[os.path.join('/', PUBLIC_NAMESPACE, METADATA_LIST_PTR)]
 
             assert virtual_collection.virtual_sources()[0].dset_name == public_path
             assert sample_md[0] == YAML.load(virtual_collection[()][0])
@@ -111,7 +115,7 @@ class TestH5Write:
         h5fp.rename(tmp_path / 'test2.h5')
         h5fp = tmp_path / 'test2.h5'
         with h5py.File(h5fp, 'r') as h5file:
-            virtual_collection = h5file['/'.join((PUBLIC_NAMESPACE, METADATA_LIST_PTR))]
+            virtual_collection = h5file[os.path.join('/', PUBLIC_NAMESPACE, METADATA_LIST_PTR)]
 
             assert virtual_collection.virtual_sources()[0].dset_name == public_path
             assert sample_md[0] == YAML.load(virtual_collection[()][0])
@@ -120,9 +124,9 @@ class TestH5Write:
 
     def test_append_to_dataset(self, tmp_path):
         """
-        * Tests appending a third datasets to the collection
+        * Tests appending a third dataset to the collection
         * Tests updating metadata documents by appending the new version
-            and updating the internal references
+            and updating the internal references within the same file handle
         """
         datasets = [
             {'id': 1},
@@ -133,10 +137,41 @@ class TestH5Write:
         with _in_memory_h5(tmp_path) as h5file:
             write_h5_md(h5file, datasets=[{'id': 'NA'}] * 2, dataset_names=dataset_names[:2])
             write_h5_md(h5file, datasets=datasets, dataset_names=dataset_names)
-            virtual_collection = h5file['/'.join((PUBLIC_NAMESPACE, METADATA_LIST_PTR))]
 
             for idx, dname in enumerate(dataset_names):
-                public_path = '/'.join((PUBLIC_NAMESPACE, dname, METADATA_PTR))
+                public_path = os.path.join('/', PUBLIC_NAMESPACE, dname, METADATA_PTR)
                 assert datasets[idx] == YAML.load(h5file[public_path][()].item())
                 # h5file[h5file[public_path].ref] is deferencing the public path
-                assert h5file[h5file[public_path].ref].name == '/'.join((PRIVATE_NAMESPACE, dname, ['2', '2', '1'][idx]))
+                assert h5file[h5file[public_path].ref].name == \
+                        os.path.join('/', PRIVATE_NAMESPACE, dname, ['2', '2', '1'][idx])
+
+    def test_append_to_existing_dataset(self, tmp_path):
+        fname = Path(tmp_path) / 'test-append.h5'
+        datasets = [
+            {'id': 1},
+            {'id': 2},
+            {'id': 3},
+            {'id': 4}
+        ]
+        dataset_names = ['one/one', 'two/two', 'one/three', 'four/four']
+        with atomic_h5_write(fname, 'a', track_order=True) as dest:
+            write_h5_md(dest, datasets=[{'id': 'NA'}] * 2, dataset_names=dataset_names[:2])
+            for dname in dataset_names[:2]:
+                dest.create_dataset(dname, data=np.empty(shape=(1,)))
+
+        with atomic_h5_write(fname, 'a', track_order=True) as dest:
+            write_h5_md(dest, datasets=datasets, dataset_names=dataset_names)
+            for dname in dataset_names[2:]:
+                dest.create_dataset(dname, data=np.empty(shape=(1,)))
+
+            with h5py.File(fname, 'r') as src:
+                # assert datasets haven't been written to pre-existing file
+                assert len(src.keys()) == 4
+
+        with h5py.File(fname, 'r') as h5file:
+            for idx, dname in enumerate(dataset_names):
+                public_path = os.path.join('/', PUBLIC_NAMESPACE, dname, METADATA_PTR)
+                assert datasets[idx] == YAML.load(h5file[public_path][()].item())
+                # h5file[h5file[public_path].ref] is deferencing the public path
+                assert h5file[h5file[public_path].ref].name == \
+                        os.path.join('/', PRIVATE_NAMESPACE, dname, ['2', '2', '1', '1'][idx])

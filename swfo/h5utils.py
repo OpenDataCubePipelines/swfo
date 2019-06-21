@@ -2,18 +2,13 @@
 Utility functions used in the conversion process to hdf5 archives
 """
 
-<<<<<<< dae8d14f23e7a38cd858458132d734f5015efba7
 from typing import Optional, List, Dict, Union
 from io import BufferedReader
-=======
-from typing import Optional, List, Dict
-from io import StringIO, BufferedReader
-import os
->>>>>>> Enable append-only-like datasets with atomic-write-like behaviour
 import uuid
 import urllib.parse
 import hashlib
 from pathlib import Path
+import os
 import tempfile
 from contextlib import contextmanager
 

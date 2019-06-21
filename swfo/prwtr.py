@@ -10,8 +10,8 @@ import json
 import numpy
 import osr
 import rasterio
-import h5py
 import pandas
+import h5py
 
 from wagl.geobox import GriddedGeoBox
 from wagl.hdf5.compression import H5CompressionFilter

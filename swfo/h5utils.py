@@ -8,15 +8,20 @@ import uuid
 import urllib.parse
 import hashlib
 
-
 from ruamel.yaml import YAML as _YAML
 from ruamel.yaml.compat import StringIO
 import h5py
 
-VLEN_STRING = h5py.special_dtype(vlen=str)
+
 FALLBACK_UUID_NAMESPACE = uuid.UUID('c5908e58-7301-4054-9f04-a0fa8cdef63b')
+PUBLIC_NAMESPACE = '/METADATA'
+PRIVATE_NAMESPACE = '/.METADATA'
+METADATA_PTR = 'CURRENT'
+METADATA_LIST_PTR = 'CURRENT-LIST'
 
 YAML = _YAML()
+VLEN_STRING = h5py.special_dtype(vlen=str)
+
 
 def _get_next_md_id(h5_group: h5py.Group, group_prefix: str) -> int:
     """
@@ -25,7 +30,7 @@ def _get_next_md_id(h5_group: h5py.Group, group_prefix: str) -> int:
     ids = [0]
 
     def _append_id(h5_key):
-        ids.append(int(h5_key[1:]))
+        ids.append(int(h5_key))
 
     group = h5_group.get(group_prefix)
     if group:
@@ -34,74 +39,101 @@ def _get_next_md_id(h5_group: h5py.Group, group_prefix: str) -> int:
     return max(ids) + 1
 
 
+def _write_dataset(
+        h5_group: h5py.Group,
+        dataset: Dict,
+        dataset_path: str = '/',
+        track_order: bool = True) -> h5py.Dataset:
+    """
+    Internal function for writing dataset metadata to a H5 file
+    """
+    doc_group = '/'.join((PRIVATE_NAMESPACE, dataset_path))
+    if not h5_group.get(doc_group):
+        h5_group.create_group(doc_group, track_order=track_order)
+
+    doc_id = str(_get_next_md_id(h5_group, doc_group))
+    ds = h5_group.create_dataset(
+        '/'.join((PRIVATE_NAMESPACE, dataset_path, doc_id)),
+        dtype=VLEN_STRING,
+        shape=(1,)
+    )
+
+    with StringIO() as _buf:
+        YAML.dump(dataset, _buf)
+        ds[()] = _buf.getvalue()
+
+    public_group = '/'.join((PUBLIC_NAMESPACE, dataset_path))
+    public_path = public_group + '/' + METADATA_PTR
+
+    if not h5_group.get(public_group):
+        h5_group.create_group(public_group, track_order=track_order)
+    if h5_group.get(public_path):
+        del h5_group[public_path]
+
+    h5_group[public_path] = h5py.SoftLink(ds.name)
+
+    return h5_group[public_path]
+
+
 def write_h5_md(
         h5_group: h5py.Group,
         datasets: Union[List[Dict], Dict],
-        dataset_names: Optional[List[str]] = None) -> None:
+        dataset_names: Optional[List[str]] = None
+        ) -> None:
     """
-    Serialises provided metadata information to yaml format inside hdf5
-    archive.
-    If a single dataset is provided the metadata is written to /METADATA/_{index}
-    and linked to /METADATA/CURRENT
-
-    If multiple datasets are provided and named, they are written to
-        /METADATA/{dataset_name}/_{index}
-    linked to /METADATA/{dataset_name}/CURRENT and
-    consolidated in a virtual dataset under /METADATA/CURRENT
+    Appends metadata documents to a hdf5 collection.
+    Variable length strings will be written to records in
+        /.METADATA/path/to/dataset_name/offset
+    A softlink will be created at:
+        /METADATA/path/to/dataset_name/CURRENT
+    An array of CURRENT metadata docs will be available at:
+        /METADATA/CURRENT-LIST
     """
-    path_fmt = '/METADATA/{}'
 
-    def _write_dataset(
-            h5_group: h5py.Group,
-            path: str,
-            dataset: Dict) -> h5py.Dataset:
-        """
-        Internal function for writing dataset metadata to a H5 file
-        """
-        ds = h5_group.create_dataset(
-            path,
-            dtype=VLEN_STRING,
-        )
+    collection_path = '/'.join((PUBLIC_NAMESPACE, METADATA_LIST_PTR))
+    new_metadata_paths = []
+    old_metadata_paths = []
 
-        with StringIO() as stream:
-            YAML.dump(dataset, stream)
-            ds[()] = stream.getvalue()
+    if h5_group.get(collection_path):
+        # Collate known metadata references
+        old_collection = h5_group[collection_path]
+        for i in range(old_collection._dcpl.get_virtual_count()):
+            old_metadata_paths.append(old_collection._dcpl.get_virtual_dsetname(i))
 
-        current_path = path.rsplit('/', 1)[0] + '/CURRENT'
-        if h5_group.get(current_path):
-            del h5_group[current_path]
+    # Create metadata and collate new references
+    for i, _ in enumerate(datasets):
+        ref = _write_dataset(h5_group, datasets[i], dataset_names[i])
+        if ref not in old_metadata_paths:
+            new_metadata_paths.append(ref)
 
-        h5_group[current_path] = h5py.SoftLink(ds.name)
+    if new_metadata_paths:
+        # Extend the virtual layout for new datasets
+        virtual_collection = h5py.VirtualLayout(
+            shape=(len(old_metadata_paths) + len(new_metadata_paths),),
+            dtype=VLEN_STRING)
 
-        return h5_group[current_path]
+        ds_cntr = 0
+        for ds_cntr, _ in enumerate(old_metadata_paths):
+            virtual_collection[ds_cntr] = h5py.VirtualSource(
+                path_or_dataset='.',
+                name=old_metadata_paths[ds_cntr],
+                dtype=VLEN_STRING,
+                shape=(1,))
 
-    if not dataset_names:
-        doc_id = _get_next_md_id(h5_group, path_fmt.format(''))
-        _write_dataset(
-            h5_group,
-            path_fmt.format('_' + str(doc_id)),
-            datasets
-        )
-    else:
-        collection_layout = h5py.VirtualLayout(
-            shape=(len(dataset_names), 1),
-            dtype=VLEN_STRING
-        )
-        for idx, dn in enumerate(dataset_names):
-            dataset_path = path_fmt.format(dn)
-            doc_id = _get_next_md_id(h5_group, dataset_path)
-            current_ref = _write_dataset(
-                h5_group,
-                dataset_path + '/_' + str(doc_id),
-                datasets[idx]
-            )
-            collection_layout[idx, :] = h5py.VirtualSource(current_ref)
+        # Increment counter if a dataset was written
+        ds_cntr = ds_cntr + 1 if ds_cntr else 0
 
-        collection_path = path_fmt.format('CURRENT')
+        for j, _ in enumerate(new_metadata_paths):
+            virtual_collection[ds_cntr+j] = h5py.VirtualSource(
+                path_or_dataset='.',
+                name=new_metadata_paths[j].name,
+                dtype=VLEN_STRING,
+                shape=(1,))
+
         if h5_group.get(collection_path):
             del h5_group[collection_path]
 
-        h5_group.create_virtual_dataset(collection_path, collection_layout)
+        h5_group.create_virtual_dataset(collection_path, virtual_collection)
 
 
 def generate_fallback_uuid(

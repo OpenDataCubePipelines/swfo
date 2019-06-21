@@ -5,8 +5,8 @@ Utility for converting GA's monthly ozone TIFF's to HDF5.
 """
 
 from pathlib import Path
-import h5py
 import rasterio
+import h5py
 
 from wagl.hdf5 import write_h5_image
 
@@ -16,6 +16,18 @@ from .h5utils import (
 
 
 PRODUCT_HREF = 'https://collections.dea.ga.gov.au/ga_c_c_ozone_1'
+
+
+def _month_sort(ozone_path: Path):
+    """
+    Provides a chronological ordering of signifiers
+    """
+    months = [
+        'jan', 'feb', 'mar', 'apr', 'may', 'jun', 
+        'jul', 'aug', 'sep', 'oct', 'nov', 'dec'
+    ]
+    search = ozone_path.stem.lower()
+    return (months.index(search), None) if search in months else (13, search)
 
 
 def convert(indir, out_h5: h5py.Group, compression, filter_opts):
@@ -35,7 +47,7 @@ def convert(indir, out_h5: h5py.Group, compression, filter_opts):
     else:
         filter_opts = filter_opts.copy()
 
-    for fname in indir.glob('*.tif'):
+    for fname in sorted(indir.glob('*.tif'), key=_month_sort):
         with rasterio.open(str(fname)) as rds:
             # the files have small dimensions, so store as a single chunk
             if 'chunks' not in filter_opts:

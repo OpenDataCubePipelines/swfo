@@ -1,8 +1,9 @@
 #!/usr/bin/env python
 
 """
-Conversion utilities for GA's auxillary data.
-Create timeseries averages for the NOAA water vapour data.
+- Conversion utilities for GA's auxillary data.
+
+- Create timeseries averages for the NOAA water vapour data.
 """
 
 import sys
@@ -25,8 +26,8 @@ from eodatasets.prepare import (
 
 from wagl.hdf5.compression import H5CompressionFilter
 
-from swfo import mcd43a1, prwtr, dsm, atsr2_aot, ozone, ecmwf
-from swfo.h5utils import write_h5_md
+from . import mcd43a1, prwtr, dsm, atsr2_aot, ozone, ecmwf
+from .h5utils import write_h5_md
 
 
 VLEN_STRING = h5py.special_dtype(vlen=str)
@@ -69,7 +70,7 @@ def _io_dir_options(f):
 
 
 @contextmanager
-def _atomic_h5_write(fname: Path, mode='r'):
+def _atomic_h5_write(fname: Path, mode='r', **kwargs):
     """
     Creates a temporary h5 file location before writing out datasets
     """
@@ -79,7 +80,7 @@ def _atomic_h5_write(fname: Path, mode='r'):
         suffix='.h5')
     fp = Path(tpath)
     try:
-        with h5py.File(tpath, mode=mode) as h5_ref:
+        with h5py.File(tpath, mode=mode, **kwargs) as h5_ref:
             yield h5_ref
         fp.rename(fname)
         fp = None
@@ -132,18 +133,21 @@ def mcd43a1_cli():
     """
 
 
-@cli.group(name='prwtr', help='Convert water vapour filess.')
+@cli.group(name='prwtr', help='Convert Water Vapour files.')
 def prwtr_cli():
     """
     NOAA NCEP/NCAR Reanalysis 1 precipital water command group
     """
 
 
-@cli.group(name='dsm', help='Convert DSM files.')
-def dsm_cli():
-    """
-    Digital surface model command group
-    """
+@cli.group(name='srtm-dsm', help='Convert SRTM DSM files.')
+def srtm_dsm_cli():
+    pass
+
+
+@cli.group(name='jaxa-dsm', help='Convert JAXA DSM files.')
+def jaxa_dsm_cli():
+    pass
 
 
 @cli.group(name='aot', help='Convert Aerosol Optical Thickness files.')
@@ -372,7 +376,7 @@ def pr_wtr_fallback(indir, outdir, compression, filter_opts):
     prwtr.fallback(indir, outdir, compression, filter_opts)
 
 
-@dsm_cli.command('h5', help="Convert GA's SRTM ENVI file into HDF5.")
+@srtm_dsm_cli.command('h5', help="Convert GA's SRTM ENVI file into HDF5.")
 @click.option("--fname", type=click.Path(dir_okay=False, file_okay=True),
               help="A readable srtm envi file.")
 @click.option("--out-fname", type=click.Path(dir_okay=False, file_okay=True),
@@ -383,6 +387,7 @@ def ga_dsm(fname, out_fname, compression, filter_opts):
     Convert GA's SRTM ENVI file into HDF5.
     """
     # convert to a Path object
+    fname = Path(fname)
     out_fname = Path(out_fname)
     out_fname.parent.mkdir(parents=True, exist_ok=True)
 
@@ -395,7 +400,34 @@ def ga_dsm(fname, out_fname, compression, filter_opts):
                          filter_opts, attrs)
 
 
-@dsm_cli.command('vrt', help='Mosaic all the JAXA DSM files via a VRT.')
+@srtm_dsm_cli.command('h5-md', help="Convert GA's SRTM ENVI file into HDF5 with md.")
+@click.option("--fname", type=click.Path(dir_okay=False, file_okay=True),
+              help="A readable srtm envi file.")
+@click.option("--out-fname", type=click.Path(dir_okay=False, file_okay=True),
+              help="A writeable directory to contain the converted files.")
+@_compression_options
+def ga_dsm_md(fname, out_fname, compression, filter_opts):
+    """
+    Convert GA's SRTM ENVI file into HDF5 with metadata.
+    """
+    # convert to a Path object
+    fname = Path(fname)
+    out_fname = Path(out_fname)
+    out_fname.parent.mkdir(parents=True, exist_ok=True)
+
+    attrs = {
+        'description': ('1 second DSM derived from the SRTM; '
+                        'Shuttle Radar Topography Mission')
+    }
+    with _atomic_h5_write(out_fname, 'a') as out_h5:
+        md, dataset_names = dsm.convert_file(
+            fname, out_h5, 'SRTM', 'GA-DSM', compression,
+            filter_opts, attrs
+        )
+        write_h5_md(out_h5, md, dataset_names)
+
+
+@jaxa_dsm_cli.command('vrt', help='Mosaic all the JAXA DSM files via a VRT.')
 @_io_dir_options
 def jaxa_vrt(indir, outdir):
     """
@@ -404,7 +436,7 @@ def jaxa_vrt(indir, outdir):
     dsm.jaxa_buildvrt(indir, outdir)
 
 
-@dsm_cli.command('vrt-to-h5', help='Convert JAXA VRT files to a HDF5 file.')
+@jaxa_dsm_cli.command('vrt-to-h5', help='Convert JAXA VRT files to a HDF5 file.')
 @_io_dir_options
 @_compression_options
 def jaxa_h5(indir, out_fname, compression, filter_opts):
@@ -423,7 +455,7 @@ def jaxa_h5(indir, out_fname, compression, filter_opts):
                              vrt_fname.stem, compression, filter_opts)
 
 
-@dsm_cli.command('h5', help='Convert a JAXA DSM .tar.gz file into a HDF5 file.')
+@jaxa_dsm_cli.command('h5', help='Convert a JAXA DSM .tar.gz file into a HDF5 file.')
 @_io_dir_options
 @_compression_options
 def jaxa_tiles(indir, outdir, compression, filter_opts):
@@ -439,8 +471,30 @@ def jaxa_tiles(indir, outdir, compression, filter_opts):
         out_fname = outdir.joinpath(Path(fname.stem).with_suffix('.h5'))
         out_fname.parent.mkdir(parents=True, exist_ok=True)
 
-        with _atomic_h5_write(out_fname, 'w') as out_h5:
-            dsm.jaxa_tile(str(fname), out_h5, compression, filter_opts)
+        with _atomic_h5_write(out_fname, 'a') as out_h5:
+            dsm.jaxa_tile(fname, out_h5, compression, filter_opts)
+
+
+@jaxa_dsm_cli.command('h5-md', help='Convert a JAXA DSM .tar.gz file into a HDF5 file with metadata.')
+@_io_dir_options
+@_compression_options
+def jaxa_tiles(indir, outdir, compression, filter_opts):
+    """
+    Convert JAXA tar.gz files into a HDF5 files with metadata.
+    """
+    # convert to Path objects
+    indir = Path(indir)
+    outdir = Path(outdir)
+
+    # find vrt files
+    for fname in indir.rglob('*.tar.gz'):
+        out_fname = outdir.joinpath(Path(fname.stem).with_suffix('.h5'))
+        out_fname.parent.mkdir(parents=True, exist_ok=True)
+
+        with _atomic_h5_write(out_fname, 'a') as out_h5:
+            md, dataset_names = dsm.jaxa_tile(
+                fname, out_h5, compression, filter_opts)
+            write_h5_md(out_h5, md, dataset_names)
 
 
 @aot_cli.command('h5', help='Converts .pix & .cmp files to a HDF5 file.')
@@ -527,7 +581,7 @@ def ozone_files_md(indir, out_fname, compression, filter_opts):
     # create directories as needed
     out_fname.parent.mkdir(parents=True, exist_ok=True)
 
-    with _atomic_h5_write(out_fname, 'w') as out_h5:
+    with _atomic_h5_write(out_fname, 'w', track_order=True) as out_h5:
         md, dataset_names = ozone.convert(
             indir, out_h5, compression, filter_opts)
         write_h5_md(out_h5, md, dataset_names)

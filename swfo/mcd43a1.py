@@ -8,9 +8,9 @@ from pathlib import Path
 from subprocess import check_call
 import tempfile
 import rasterio
-import h5py
 import netCDF4
 import numpy
+import h5py
 
 from wagl.hdf5 import write_h5_image, attach_attributes, attach_image_attributes
 from wagl.hdf5.compression import H5CompressionFilter

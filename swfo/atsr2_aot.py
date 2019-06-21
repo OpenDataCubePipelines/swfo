@@ -11,10 +11,11 @@ from pathlib import Path
 from posixpath import join as ppjoin
 
 import numpy
-import h5py
 import pandas
 from shapely.geometry import Polygon
 from shapely import wkt
+import h5py
+
 from wagl.hdf5 import write_dataframe
 
 from .h5utils import (

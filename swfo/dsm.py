@@ -18,14 +18,20 @@ from wagl.hdf5 import attach_image_attributes
 from wagl.hdf5.compression import H5CompressionFilter
 from wagl.tiling import generate_tiles
 
+from .h5utils import (
+    generate_fallback_uuid
+)
+
 
 RASTERIO_PREFIX = 'tar:{}!/{}'
 GDAL_PREFIX = '/vsitar/{}'
 
+PRODUCT_HREF = 'https://collections.dea.ga.gov.au/ga_c_c_dsm_1'
 
-def convert_file(fname, out_h5: h5py.Group, group_name='/', dataset_name='dataset',
-                 compression=H5CompressionFilter.LZF, filter_opts=None,
-                 attrs=None):
+
+def convert_file(fname: Path, out_h5: h5py.Group, group_name='/',
+                 dataset_name='dataset', compression=H5CompressionFilter.LZF,
+                 filter_opts=None, attrs=None):
     """
     Convert generic single band image file to HDF5.
     Processes in a tiled fashion to minimise memory use.
@@ -61,7 +67,7 @@ def convert_file(fname, out_h5: h5py.Group, group_name='/', dataset_name='datase
     :return:
         None. Content is written directly to disk.
     """
-    with rasterio.open(fname) as ds:
+    with rasterio.open(str(fname), 'r') as ds:
 
         # create empty or copy the user supplied filter options
         if not filter_opts:
@@ -71,7 +77,7 @@ def convert_file(fname, out_h5: h5py.Group, group_name='/', dataset_name='datase
 
         # use sds native chunks if none are provided
         if 'chunks' not in filter_opts:
-            filter_opts['chunks'] = (256, 256)
+            filter_opts['chunks'] = (min(256, ds.height), min(256, ds.width))
 
         # read all cols for n rows (ytile), as the GA's DEM is BSQ interleaved
         ytile = filter_opts['chunks'][0]
@@ -98,6 +104,17 @@ def convert_file(fname, out_h5: h5py.Group, group_name='/', dataset_name='datase
             idx = (slice(tile[0][0], tile[0][1]), slice(tile[1][0], tile[1][1]))
             data = ds.read(1, window=tile)
             dataset[idx] = data
+
+        assert ds.count == 1  # checksum call assumes single band image
+        metadata = {
+            'id': str(generate_fallback_uuid(
+                PRODUCT_HREF,
+                path=str(fname.stem),
+                checksum=ds.checksum(1)
+            ))
+        }
+
+    return [metadata], [dataset_name]
 
 
 def jaxa_buildvrt(indir, outdir):
@@ -163,12 +180,14 @@ def jaxa_buildvrt(indir, outdir):
             check_call(cmd)
 
 
-def jaxa_tile(fname, out_h5: h5py.Group, compression=H5CompressionFilter.LZF,
-              filter_opts=None):
+def jaxa_tile(fname: Path, out_h5: h5py.Group,
+              compression=H5CompressionFilter.LZF, filter_opts=None):
     """
     Convert a JAXA DSM .tar.gz file into a HDF5 file.
     """
-    with tarfile.open(fname) as targz:
+    metadata = []
+    dataset_names = []
+    with tarfile.open(str(fname), 'r') as targz:
         for member in targz.getmembers():
             # only process TIFF's
             if member.name.endswith('.tif'):
@@ -181,5 +200,9 @@ def jaxa_tile(fname, out_h5: h5py.Group, compression=H5CompressionFilter.LZF,
                 raster_fname = RASTERIO_PREFIX.format(fname, name)
 
                 # convert
-                convert_file(raster_fname, out_h5, dataset_name=ds_name,
-                             compression=compression, filter_opts=filter_opts)
+                _md, _ds = convert_file(
+                    raster_fname, out_h5, dataset_name=ds_name,
+                    compression=compression, filter_opts=filter_opts)
+                metadata.append(_md)
+                dataset_names.append(_ds)
+    return metadata, dataset_names

@@ -118,7 +118,7 @@ def folder_doy(folder):
 
 
 def shape_of_window(window):
-    """ returns a shape from a window. """ 
+    """ returns a shape from a window. """
 
     y_shape = window[0].stop - window[0].start
     x_shape = window[1].stop - window[1].start
@@ -771,15 +771,16 @@ def _get_measurement_info() -> Dict:
 def munge_metadata(fp, start_ds=None, end_ds=None, only_id=True): 
     """
     extracts metadata from MCD43A1 .h5 files. Returns only uuid of the
-    h5 files or general metadata attributes if only_id is set to False.
+    h5 files if only_id is set to True. Else general metadata attributes
+    of the h5 file is returned.
     """
     with h5py.File(fp, 'r') as src:
         src_md = YAML.load(src[METADATA_OFFSET][()].item())
 
         if only_id:
             return src_md['id']
-        
-        metadata_doc = { 
+
+        metadata_doc = {
             'id': str(uuid.uuid4()),  # Not sure what the params would be for deterministic uuid
             'product': {'href': FALLBACK_PRODUCT_HREF},
             'lineage': {
@@ -927,25 +928,24 @@ def write_brdf_fallback(
             write_brdf_fallback_band(h5_info, tile, band, tmp_dir, filter_size, julian_days,
                                      pthresh=10.0, data_chunks=(240, 240), compute_chunks=(240, 240),
                                      nprocs=nprocs, compression=compression, filter_opts=filter_opts)
-
-        # get metadata for a tile 
+        # get metadata for a tile
         start_ds, *_, end_ds = sorted(h5_info.keys())
         tile_metadata = munge_metadata(h5_info[start_ds], start_ds, end_ds, only_id=False)
-        
-        with Pool(processes=nprocs) as pool: 
+
+        with Pool(processes=nprocs) as pool:
             ids_brdf = pool.starmap(munge_metadata, [(fp, start_ds, end_ds) for key, fp in h5_info.items()])
-        
+
         tile_metadata['lineage']['brdf_threshold'] = ids_brdf
         
         with Pool(processes=nprocs) as pool: 
             pool.starmap(concatenate_files, [([str(fp) for fp in Path(tmp_dir).rglob(BRDF_MATCH_PATTERN
                                                                                      .format(tile, doy))],
                                               os.path.join(outdir, BRDF_AVG_FILE_FMT.format(tile, doy)),
-                                              h5_info, doy) for doy in julian_days])
+                                              h5_info, doy, tile_metadata) for doy in julian_days])
 
     # symlink doy 366 to the final results of doy 365 results
-    os.symlink(os.path.join(outdir, BRDF_AVG_FILE_FMT.format(tile, 365)),
-               os.path.join(outdir, BRDF_AVG_FILE_FMT.format(tile, 366)))
+    os.symlink(pjoin(outdir, BRDF_AVG_FILE_FMT.format(tile, 365)),
+               pjoin(outdir, BRDF_AVG_FILE_FMT.format(tile, 366)))
 
 
 @click.command()
@@ -971,6 +971,7 @@ def main(
         nprocs: int,
         compression: H5CompressionFilter,
         filter_opts: Optional[Dict] = None):
+    """ main function to execute brdf fallback computation for a MODIS tile. """
 
     write_brdf_fallback(
         brdf_dir=Path(brdf_dir),

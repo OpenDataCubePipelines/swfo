@@ -26,9 +26,6 @@ YAML = _YAML()
 VLEN_STRING = h5py.special_dtype(vlen=str)
 
 
-VLEN_STRING = h5py.special_dtype(vlen=str)
-
-
 def _get_next_md_id(h5_group: h5py.Group, group_prefix: str) -> int:
     """
     Incrementer used to name internal metadata document references
@@ -155,7 +152,7 @@ def _append_data_to_existing_file(inh5: h5py.Group, outh5: h5py.Group, track_ord
 
     # Confirm new non-metadata datasets are missing in output file
     for k in list(inh5.keys()):
-        if k == PUBLIC_NAMESPACE or k == PRIVATE_NAMESPACE:
+        if k in (PUBLIC_NAMESPACE, PRIVATE_NAMESPACE):
             continue
         else:
             for ds_path in _traverse(inh5, k):

@@ -12,7 +12,7 @@ from pathlib import Path
 
 import tempfile
 import datetime
-from multiprocessing import Pool as ProcessPool, Lock 
+from multiprocessing import Pool as ProcessPool, Lock
 from typing import Optional
 import uuid
 
@@ -48,7 +48,7 @@ SCALE_FACTOR_2 = 0.001
 INV_SCALE_FACTOR_2 = 1000
 
 DTYPE_MAIN = np.dtype([(BrdfModelParameters.ISO.value, 'int16'),
-                       (BrdfModelParameters.VOL.value, 'int16'), 
+                       (BrdfModelParameters.VOL.value, 'int16'),
                        (BrdfModelParameters.GEO.value, 'int16')])
 DTYPE_SUPPORT = np.dtype([('AFX', 'int16'), ('RMS', 'int16')])
 DTYPE_QUALITY = np.dtype([('MASK', 'int16'), ('NUM', 'int16')])
@@ -124,7 +124,7 @@ def folder_year(folder):
 
 
 def shape_of_window(window):
-    """ returns a shape from a window. """ 
+    """ returns a shape from a window. """
 
     y_shape = window[0].stop - window[0].start
     x_shape = window[1].stop - window[1].start
@@ -205,7 +205,7 @@ def read_brdf_quality_dataset(ds, window=None):
 
     nodata_mask = (data == float(ds.attrs['_FillValue']))
     data[nodata_mask] = np.nan
-    
+
     return data
 
 
@@ -215,7 +215,7 @@ def read_brdf_dataset(ds, param, window=None):
         A 'file object' type: hdf5 file object containing the BRDF data set
         as a numpy structured data.
     :param param:
-        A 'str' type: name of brdf parameter 
+        A 'str' type: name of brdf parameter
     :param window:
         A 'slice object' type: contain the set of indices specified by
         range(start, stop, step). Default=None, results in reading whole
@@ -229,7 +229,7 @@ def read_brdf_dataset(ds, param, window=None):
         window = slice(None)
 
     data = ds[window][param].astype('float32')
-    
+
     nodata_mask = (data == float(ds.attrs['_FillValue']))
     data[nodata_mask] = np.nan
 
@@ -238,7 +238,7 @@ def read_brdf_dataset(ds, param, window=None):
 
     return scale_factor * (data - add_offset)
 
-    
+
 def get_qualityband_count_window(h5_info, band_name, window):
     """ returns sum of good quality data count per pixels for a window. """
 
@@ -414,9 +414,9 @@ def concatenate_files(infile_paths, outfile, h5_info, doy, tile_metadata):
     A function to concatenate multiple h5 files
     """
     assert len(infile_paths) == 7
-    
+
     # set the uuids used in processing average for given day of year
-    tile_metadata['lineage']['doy_average'] = [munge_metadata(h5_info[key]) 
+    tile_metadata['lineage']['doy_average'] = [munge_metadata(h5_info[key])
                                                for key in h5_info if folder_doy(key) == doy]
     with h5py.File(outfile, 'w') as out_fid:
         write_h5_md(out_fid, [tile_metadata], ['/'])
@@ -427,7 +427,7 @@ def concatenate_files(infile_paths, outfile, h5_info, doy, tile_metadata):
 
 
 def generate_windows(shape, compute_chunks):
-    """ generates a window of height and width equivalent to compute_chunk's shape. """ 
+    """ generates a window of height and width equivalent to compute_chunk's shape. """
     for x, y in generate_tiles(shape[0], shape[1], compute_chunks[0], compute_chunks[1]):
         yield (slice(*y), slice(*x))
 
@@ -522,32 +522,32 @@ def write_chunk(data_dict, fid, band, window):
     and compression.
     """
     assert len(data_dict) == 1
-    
+
     key = list(data_dict.keys())[0]
     shape = shape_of_window(window)
-   
+
     data_main = np.ndarray(shape, dtype=DTYPE_MAIN)
-    for band_name in DTYPE_MAIN.names: 
+    for band_name in DTYPE_MAIN.names:
         data = data_dict[key][band_name]
-        data_main[band_name] = np.rint(data_dict[key][band_name] 
+        data_main[band_name] = np.rint(data_dict[key][band_name]
                                        * INV_SCALE_FACTOR).filled(fill_value=NODATA).astype('int16')
-                                         
+
     data_support = np.ndarray(shape, dtype=DTYPE_SUPPORT)
-    for band_name in DTYPE_SUPPORT.names: 
+    for band_name in DTYPE_SUPPORT.names:
         data_support[band_name] = np.rint(data_dict[key][band_name]
                                           * INV_SCALE_FACTOR).filled(fill_value=NODATA).astype('int16')
 
     data_quality = np.ndarray(shape, dtype=DTYPE_QUALITY)
-    for band_name in DTYPE_QUALITY.names: 
+    for band_name in DTYPE_QUALITY.names:
         data_quality[band_name] = data_dict[key][band_name].astype('int16')
-   
+
     fid['BRDF_Albedo_Parameters_{}'.format(band)][window] = data_main
     fid['BRDF_Albedo_Shape_Indices_{}'.format(band)][window] = data_support
     fid['BRDF_Albedo_Shape_Parameters_Quality_{}'.format(band)][window] = data_quality
 
 
 def get_band_info(h5_info, band_name):
-    """ returns shape and h5 attributes. """ 
+    """ returns shape and h5 attributes. """
 
     for date in h5_info:
         with h5py.File(h5_info[date], 'r') as fid:
@@ -611,7 +611,7 @@ def apply_threshold(clean_data_file, h5_info, band_name, window, filter_size, th
         # read the data relevant to this range
         for date in all_data_keys[start_idx:end_idx]:
             if date not in data_dict:
-                data_dict[date] = np.ma.masked_invalid(np.array([get_albedo_data(h5_info[date], param.value, window) 
+                data_dict[date] = np.ma.masked_invalid(np.array([get_albedo_data(h5_info[date], param.value, window)
                                                                  for param in BrdfModelParameters]))
 
         # clean up the data we don't need anymore
@@ -700,7 +700,7 @@ def apply_convolution(filename, h5_info, window, filter_size, mask_indices):
         data_clean *= SCALE_FACTOR_2
 
         # perform convolution using Gaussian filter defined above
-        for i in range(data_clean.shape[1]): 
+        for i in range(data_clean.shape[1]):
             for j in range(data_clean.shape[2]):
                 data_clean[:, i, j] = np.convolve(data_clean[:, i, j], filt, mode='same')
 
@@ -712,19 +712,19 @@ def apply_convolution(filename, h5_info, window, filter_size, mask_indices):
     return data_convolved
 
 
-def munge_metadata(fp, start_ds=None, end_ds=None, only_id=True): 
+def munge_metadata(fp, start_ds=None, end_ds=None, only_id=True):
     """
-    extracts metadata from MCD43A1 .h5 files. Returns only uuid of the 
-    h5 files if only_id is set to True. Else general metadata attributes 
-    of the h5 file is returned. 
+    extracts metadata from MCD43A1 .h5 files. Returns only uuid of the
+    h5 files if only_id is set to True. Else general metadata attributes
+    of the h5 file is returned.
     """
-    with h5py.File(fp, 'r') as src: 
+    with h5py.File(fp, 'r') as src:
         src_md = YAML.load(src[METADATA_OFFSET][()].item())
-        
-        if only_id: 
+
+        if only_id:
             return src_md['id']
-        
-        metadata_doc = { 
+
+        metadata_doc = {
             'id': str(uuid.uuid4()),  # Not sure what the params would be for deterministic uuid
             'product': {'href': FALLBACK_PRODUCT_HREF},
             'lineage': {
@@ -799,15 +799,15 @@ def write_brdf_fallback_band(h5_info, tile, band, outdir, filter_size, set_doys,
 
     thresholds = calculate_thresholds(h5_info, albedo_band_name(band), shape, compute_chunks, nprocs=nprocs)
     quality_count = None
-    
+
     clean_data_file = pjoin(outdir, 'clean_data_{}_{}.h5'.format(band, tile))
-    
+
     LOCKS[clean_data_file] = Lock()
-    
+
     with h5py.File(clean_data_file, 'w') as clean_data:
         for key in h5_info:
             create_dataset(clean_data, key, (3, shape[0], shape[1]), {}, chunks=(1,) + data_chunks)
-    
+
     with Pool(processes=nprocs) as pool:
         pool.starmap(apply_threshold,
                      [(clean_data_file, h5_info, albedo_band_name(band),
@@ -836,36 +836,33 @@ def write_brdf_fallback(brdf_dir, outdir, tile, year_from, year_to, filter_size,
     """
     h5_info = hdf5_files(brdf_dir, tile=tile, year_from=year_from, year_to=year_to)
     set_doys = sorted(set(folder_doy(item) for item in h5_info))
-    
+
     # remove doy 366 from further processing, final results for 366 will be symlinked to doy 365
     set_doys.discard(366)
-    
+
     with tempfile.TemporaryDirectory() as tmp_dir:
         for band in BAND_LIST:
             write_brdf_fallback_band(h5_info, tile, band, tmp_dir, filter_size, set_doys,
                                      pthresh=10.0, data_chunks=(240, 240), compute_chunks=(240, 240),
                                      nprocs=nprocs, compression=compression)
-<<<<<<< ab65ddf285d7cf6628baa16f0563fc8218074ff3
-=======
-        
-        # get metadata for a tile 
+
+        # get metadata for a tile
         start_ds, *_, end_ds = sorted(h5_info.keys())
         tile_metadata = munge_metadata(h5_info[start_ds], start_ds, end_ds, only_id=False)
-        
-        with Pool(processes=nprocs) as pool: 
+
+        with Pool(processes=nprocs) as pool:
             ids_brdf = pool.starmap(munge_metadata, [(fp, start_ds, end_ds) for key, fp in h5_info.items()])
-        
+
         tile_metadata['lineage']['brdf_threshold'] = ids_brdf
-        
->>>>>>> writing metadata for final brdf average files
-        with Pool(processes=nprocs) as pool: 
+
+        with Pool(processes=nprocs) as pool:
             pool.starmap(concatenate_files, [([str(fp) for fp in Path(tmp_dir).rglob(BRDF_MATCH_PATTERN
                                                                                      .format(tile, doy))],
                                               os.path.join(outdir, BRDF_AVG_FILE_FMT.format(tile, doy)),
                                               h5_info, doy, tile_metadata) for doy in set_doys])
-    
-    # symlink doy 366 to the final results of doy 365 results 
-    os.symlink(pjoin(outdir, BRDF_AVG_FILE_FMT.format(tile, 365)), 
+
+    # symlink doy 366 to the final results of doy 365 results
+    os.symlink(pjoin(outdir, BRDF_AVG_FILE_FMT.format(tile, 365)),
                pjoin(outdir, BRDF_AVG_FILE_FMT.format(tile, 366)))
 
 
@@ -879,7 +876,7 @@ def write_brdf_fallback(brdf_dir, outdir, tile, year_from, year_to, filter_size,
 @click.option('--filter-size', default=22)
 @click.option('--nprocs', default=27)
 @click.option('--compression', default=H5CompressionFilter.BLOSC_ZSTANDARD)
-def main(brdf_dir, outdir, tile, year_from, year_to, filter_size, nprocs, compression): 
+def main(brdf_dir, outdir, tile, year_from, year_to, filter_size, nprocs, compression):
     """ main function to execute brdf fallback computation for a MODIS tile. """
 
     write_brdf_fallback(brdf_dir, outdir, tile, year_from, year_to, filter_size, nprocs, compression)

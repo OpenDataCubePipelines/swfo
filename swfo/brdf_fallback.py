@@ -992,7 +992,7 @@ def write_brdf_fallback(
 
     # Day 365 will be used to represent the leap day
     if 366 in day_numbers:
-        day_numbers.discard(366)
+        day_numbers.remove(366)
 
     with tempfile.TemporaryDirectory() as tmp_dir:
         for band in BAND_LIST:

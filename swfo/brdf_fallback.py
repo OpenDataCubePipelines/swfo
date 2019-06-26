@@ -747,7 +747,6 @@ def _get_measurement_info() -> Dict:
     """
     Returns band specifications for the BRDF fallback datasets
     """
-    obs_bands = ['band1', 'band2', 'band3', 'band4', 'band5', 'band6', 'band7']
     datatype_bandmap = {
         'Parameters':  DTYPE_MAIN.names,
         'Shape_Indices': DTYPE_SUPPORT.names,
@@ -757,7 +756,7 @@ def _get_measurement_info() -> Dict:
     measurements = {}
 
     for dt_key, dtype_names in datatype_bandmap.items():
-        for band_name in obs_bands:
+        for band_name in BAND_LIST:
             for dt_name in dtype_names:
                 h5_layer = '_'.join(('BRDF_Albedo', dt_key, band_name))
                 measurements[h5_layer + '_' + dt_name.lower()] = {

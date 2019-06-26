@@ -22,7 +22,14 @@ import fnmatch
 import h5py
 import numpy as np
 import click
+from affine import Affine
+import shapely.affinity
+import shapely.geometry
+import shapely.ops
+from scipy import ndimage
+import rasterio.features
 
+from eodatasets.metadata.valid_region import _to_lists
 from wagl.hdf5.compression import H5CompressionFilter
 from wagl.hdf5 import attach_image_attributes
 from wagl.tiling import generate_tiles
@@ -30,7 +37,7 @@ from wagl.constants import BrdfModelParameters
 
 from . import brdf_shape
 from .convert import _compression_options
-from .h5utils import write_h5_md, YAML
+from .h5utils import write_h5_md, YAML, atomic_h5_write
 
 BAND_LIST = ['Band{}'.format(band) for band in range(1, 8)]
 FALLBACK_PRODUCT_HREF = 'https://collections.dea.ga.gov.au/ga_c_m_brdfalbedo_2'
@@ -60,7 +67,7 @@ DTYPE_QUALITY = np.dtype([('MASK', 'int16'), ('NUM', 'int16')])
 METADATA_OFFSET = '/METADATA/CURRENT'
 
 
-def get_datetime(dt: Optional[datetime] = None):
+def get_datetime(dt: Optional[datetime] = None) -> datetime:
     """
     Returns a datetime object (defaults to utcnow) with tzinfo set to utc
 
@@ -97,17 +104,17 @@ def quality_band_name(band):
     return 'BRDF_Albedo_Band_Mandatory_Quality_{}'.format(band)
 
 
-def folder_datetime(folder):
+def folder_datetime(folder: str) -> datetime:
     """
     :param folder:
         A 'str' type: A Folder name in format ('%Y'.%m.%d').
     :return:
-        A 'date' object parsed from folder format.
+        A 'datetime' object parsed from folder format.
     """
     return datetime.strptime(folder, '%Y.%m.%d')
 
 
-def folder_doy(folder):
+def folder_doy(folder: str) -> int:
     """
     :param folder:
         A 'str' type: A Folder name in format ('%Y'.%m.%d').
@@ -459,16 +466,47 @@ def concatenate_files(
     """
     A function to concatenate multiple h5 files and append metadata information.
     """
+
     assert len(infile_paths) == 7
 
     # set the uuids used in processing average for given day of year
-    tile_metadata['lineage']['doy_average'] = [munge_metadata(h5_info[key])
-                                               for key in h5_info if folder_doy(key) == doy]
-    with h5py.File(outfile, 'w') as out_fid:
-        for fp in infile_paths:
+    tile_metadata['lineage']['doy_average'] = [
+        munge_metadata(h5_info[key]) for key in h5_info
+        if folder_doy(key) == doy]
+
+    # Set deterministic UUID from lineage
+    tile_metadata['id'] = str(uuid.uuid5(
+        FALLBACK_NAMESPACE,
+        FALLBACK_PRODUCT_HREF + '&' + urllib.parse.urlencode(
+            tile_metadata['lineage']
+        )
+    ))
+
+    geom_mask = None
+    transform = None
+
+    with atomic_h5_write(outfile, 'w') as out_fid:
+        # Sorting works since No. of bands < 10
+        # note that 3 hdf5 datasets will show consecutively per band
+        for fp in sorted(infile_paths):
             with h5py.File(fp, 'r') as in_fid:
                 for ds_band in in_fid:
+                    if 'BRDF_Albedo_Parameters_' in ds_band:
+                        _band = in_fid[ds_band]
+                        if not transform:
+                            transform = Affine(_band.attrs['geotransform'])
+                        nodata_value = _band.attrs['_FillValue']
+                        albedo_params = _band[()]
+                        if geom_mask:
+                            geom_mask |= np.logical_or(*((albedo_params[layer] != nodata_value)
+                                                         for layer in DTYPE_MAIN.names))
+                        else:
+                            geom_mask = np.logical_or(*((albedo_params[layer] != nodata_value, )
+                                                        for layer in DTYPE_MAIN.names))
                     in_fid.copy(source=ds_band, dest=out_fid)
+        # Calculate valid bounds from source ISO, VOL, GEO params
+        tile_metadata['geometry'] = _calculate_valid_bounds(geom_mask, transform)
+        # Write out metadata
         write_h5_md(out_fid, [tile_metadata], ['/'])
 
 
@@ -688,8 +726,8 @@ def apply_threshold(clean_data_file, h5_info, band_name, window, filter_size, th
             if _date not in all_data_keys[start_idx:end_idx]:
                 del data_dict[_date]
 
-        data_all_params = np.ma.array([data_dict[date]
-                                       for date in all_data_keys[start_idx:end_idx]])
+        data_all_params = np.ma.array([data_dict[_date]
+                                       for _date in all_data_keys[start_idx:end_idx]])
 
         for param_index, param in enumerate(BrdfModelParameters):
 
@@ -805,7 +843,7 @@ def _get_measurement_info() -> Dict:
     return measurements
 
 
-def munge_metadata(fp, start_ds=None, end_ds=None, only_id=True): 
+def munge_metadata(fp: str, only_id: bool = True) -> Dict:
     """
     extracts metadata from MCD43A1 .h5 files. Returns only uuid of the
     h5 files if only_id is set to True. Else general metadata attributes
@@ -817,23 +855,18 @@ def munge_metadata(fp, start_ds=None, end_ds=None, only_id=True):
         if only_id:
             return src_md['id']
 
-        metadata_doc = {
-            'id': str(uuid.uuid4()),  # Not sure what the params would be for deterministic uuid
-            'product': {'href': FALLBACK_PRODUCT_HREF},
-            'lineage': {
-                'brdf_threshold': [],
-                'doy_average': []
-            }
-        }
-        metadata_doc['crs'] = src_md['crs']
-        metadata_doc['geometry'] = src_md['geometry']
-        metadata_doc['grids'] = src_md['grids']
-        metadata_doc['measurements'] = '???'  # Need to know the measurements
-        metadata_doc['properties'] = {
-            'dtr:start_datetime': get_datetime(
-                datetime.strptime(start_ds, '%Y.%m.%d')).isoformat(),
-            'dtr:end_datetime': get_datetime(
-                datetime.strptime(end_ds, '%Y.%m.%d')).isoformat(),
+    metadata_doc = {
+        'id': None,
+        'product': {'href': FALLBACK_PRODUCT_HREF},
+        'crs': src_md['crs'],
+        'geometry': src_md['geometry'],
+        'grids': src_md['grids'],
+        'measurements': _get_measurement_info(),
+        'lineage': {
+            'doy_average': [],
+            'brdf_threshold': [],
+        },
+        'properties': {
             'eo:instrument': src_md['properties']['eo:instrument'],
             'eo:platform': src_md['properties']['eo:platform'],
             'eo:gsd': src_md['properties']['eo:gsd'],
@@ -844,8 +877,9 @@ def munge_metadata(fp, start_ds=None, end_ds=None, only_id=True):
             }],
             'odc:creation_datetime': get_datetime().isoformat(),
             'odc:file_format': 'HDF5',
-            'odc:region_code': src_md['properties']['odc:region_code']
+            'odc:region_code': src_md['properties'].get('odc:region_code', None)
         }
+    }
 
     return metadata_doc
 
@@ -958,7 +992,7 @@ def write_brdf_fallback(
     day_numbers = sorted(set(folder_doy(item) for item in h5_info))
 
     # Day 365 will be used to represent the leap day
-    julian_days.discard(366)
+    day_numbers.discard(366)
 
     with tempfile.TemporaryDirectory() as tmp_dir:
         for band in BAND_LIST:
@@ -966,15 +1000,15 @@ def write_brdf_fallback(
                                      pthresh=10.0, data_chunks=(240, 240), compute_chunks=(240, 240),
                                      nprocs=nprocs, compression=compression, filter_opts=filter_opts)
         # get metadata for a tile
-        start_ds, *_, end_ds = sorted(h5_info.keys())
-        tile_metadata = munge_metadata(h5_info[start_ds], start_ds, end_ds, only_id=False)
+        start_ds, *_ = sorted(h5_info.keys())
+        tile_metadata = munge_metadata(h5_info[start_ds], only_id=False)
 
         with Pool(processes=nprocs) as pool:
-            ids_brdf = pool.starmap(munge_metadata, [(fp, start_ds, end_ds) for key, fp in h5_info.items()])
+            ids_brdf = pool.starmap(munge_metadata, [(fp, ) for key, fp in h5_info.items()])
 
         tile_metadata['lineage']['brdf_threshold'] = ids_brdf
-        
-        with Pool(processes=nprocs) as pool: 
+
+        with Pool(processes=nprocs) as pool:
             pool.starmap(concatenate_files, [([str(fp) for fp in Path(tmp_dir).rglob(BRDF_MATCH_PATTERN
                                                                                      .format(tile, doy))],
                                               os.path.join(outdir, BRDF_AVG_FILE_FMT.format(tile, doy)),

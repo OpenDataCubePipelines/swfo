@@ -417,7 +417,45 @@ def get_std_block(h5_info, band_name, param, window):
     return np.nanstd(data, axis=0, ddof=1, keepdims=False)
 
 
-def concatenate_files(infile_paths, outfile, h5_info, doy, tile_metadata):
+def _calculate_valid_bounds(mask: np.ndarray, transform: Affine) -> Dict:
+    """
+    Implements same functionality as eodatasets.metadata.valid_region
+    except mask and transform as supplied by user
+    """
+    mask = ndimage.binary_fill_holes(mask)
+    shapes = rasterio.features.shapes(mask.astype('uint8'), mask=None)
+    shape = shapely.ops.unary_union([
+        shapely.geometry.shape(shape) for shape, val in shapes if val == 1])
+
+    # convex hull
+    geom = shape.convex_hull
+
+    # buffer by 1 pixel
+    geom = geom.buffer(1, join_style=3, cap_style=3)
+
+    # simplify with 1 pixel radius
+    geom = geom.simplify(1)
+
+    # intersect with image bounding box
+    geom = geom.intersection(
+        shapely.geometry.box(0, 0, mask.shape[1], mask.shape[0]))
+
+    # transform from pixel space into CRS space
+    geom = shapely.affinity.affine_transform(
+        geom, (transform.a, transform.b, transform.d,
+               transform.e, transform.xoff, transform.yoff))
+
+    output = shapely.geometry.mapping(geom)
+    output['coordinates'] = _to_lists(output['coordinates'])
+    return output
+
+
+def concatenate_files(
+        infile_paths: Iterable[str],
+        outfile: str,
+        h5_info: Dict,
+        doy: str,
+        tile_metadata: Dict) -> None:
     """
     A function to concatenate multiple h5 files and append metadata information.
     """
@@ -812,7 +850,7 @@ def munge_metadata(fp, start_ds=None, end_ds=None, only_id=True):
     return metadata_doc
 
 
-def post_cleanup_process(window, julian_days, h5_info, outdir, tile, clean_data_file,
+def post_cleanup_process(window, day_numbers, h5_info, outdir, tile, clean_data_file,
                          filter_size, band, bad_indices):
     """
     This function implements gaussian smoothing of the cleaned dataset,
@@ -824,7 +862,7 @@ def post_cleanup_process(window, julian_days, h5_info, outdir, tile, clean_data_
     data_convolved = apply_convolution(clean_data_file, h5_info, window, filter_size,
                                        bad_indices[window])
 
-    for doy in julian_days:
+    for doy in day_numbers:
         avg_data = temporal_average(data_convolved, doy)
         filtered_data = brdf_indices_quality_check(avg_data=avg_data)
 
@@ -840,7 +878,7 @@ def write_brdf_fallback_band(
         band: str,
         outdir: Path,
         filter_size: int,
-        julian_days: Set[int],
+        day_numbers: Set[int],
         pthresh: float,
         data_chunks: Iterable[int],
         compute_chunks: Iterable[int],
@@ -848,7 +886,7 @@ def write_brdf_fallback_band(
         compression: H5CompressionFilter,
         filter_opts: Optional[Dict]):
     """
-    Computes pre-MODIS BRDF for a single band for every unique day of the year (from julian_days)
+    Computes pre-MODIS BRDF for a single band for every unique day of the year (from day_numbers)
     """
 
     min_numpix_required = np.rint((pthresh / 100.0) * len(h5_info))
@@ -882,7 +920,7 @@ def write_brdf_fallback_band(
                        window, filter_size, thresholds, bad_indices[window])
                       for window in generate_windows(shape,
                                                      compute_chunks=compute_chunks)])
-    for doy in julian_days:
+    for doy in day_numbers:
         outfile = pjoin(outdir, BRDF_AVG_FILE_BAND_FMT.format(tile, doy, band))
         LOCKS[outfile] = Lock()
 
@@ -892,7 +930,7 @@ def write_brdf_fallback_band(
 
     with Pool(processes=nprocs) as pool:
         pool.starmap(post_cleanup_process,
-                     [(window, julian_days, h5_info, outdir, tile,
+                     [(window, day_numbers, h5_info, outdir, tile,
                        clean_data_file, filter_size, band, bad_indices)
                       for window in generate_windows(shape, compute_chunks)])
 
@@ -917,14 +955,14 @@ def write_brdf_fallback(
         start_date=start_dt.date() if start_dt else None,
         end_date=end_dt.date() if end_dt else None)
 
-    julian_days = sorted(set(folder_doy(item) for item in h5_info))
+    day_numbers = sorted(set(folder_doy(item) for item in h5_info))
 
     # Day 365 will be used to represent the leap day
     julian_days.discard(366)
-    
+
     with tempfile.TemporaryDirectory() as tmp_dir:
         for band in BAND_LIST:
-            write_brdf_fallback_band(h5_info, tile, band, tmp_dir, filter_size, julian_days,
+            write_brdf_fallback_band(h5_info, tile, band, tmp_dir, filter_size, day_numbers,
                                      pthresh=10.0, data_chunks=(240, 240), compute_chunks=(240, 240),
                                      nprocs=nprocs, compression=compression, filter_opts=filter_opts)
         # get metadata for a tile
@@ -940,7 +978,7 @@ def write_brdf_fallback(
             pool.starmap(concatenate_files, [([str(fp) for fp in Path(tmp_dir).rglob(BRDF_MATCH_PATTERN
                                                                                      .format(tile, doy))],
                                               os.path.join(outdir, BRDF_AVG_FILE_FMT.format(tile, doy)),
-                                              h5_info, doy, tile_metadata) for doy in julian_days])
+                                              h5_info, doy, tile_metadata) for doy in day_numbers])
 
     # symlink doy 366 to the final results of doy 365 results
     os.symlink(pjoin(outdir, BRDF_AVG_FILE_FMT.format(tile, 365)),

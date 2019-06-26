@@ -15,7 +15,6 @@ from datetime import datetime, timezone, date
 from typing import Optional, Dict, Iterable, Set
 import uuid
 import urllib.parse
-import multiprocessing as mp
 from multiprocessing import Pool as ProcessPool, Lock
 
 import fnmatch
@@ -992,7 +991,8 @@ def write_brdf_fallback(
     day_numbers = sorted(set(folder_doy(item) for item in h5_info))
 
     # Day 365 will be used to represent the leap day
-    day_numbers.discard(366)
+    if 366 in day_numbers:
+        day_numbers.discard(366)
 
     with tempfile.TemporaryDirectory() as tmp_dir:
         for band in BAND_LIST:
@@ -1026,11 +1026,10 @@ def write_brdf_fallback(
               help='Output BRDF dataset directory root.')
 @click.option('--tile', help='Modis tile reference. Example: h29v12',
               default='h29v12')
-@click.option('--start-dt', type=click.DateTime(), default=None)
-@click.option('--end-dt', type=click.DateTime(), default=None)
+@click.option('--start-dt', type=click.DateTime(), default='2002-1-1')
+@click.option('--end-dt', type=click.DateTime(), default='2018-12-31')
 @click.option('--filter-size', type=int, default=22)
-@click.option('--nprocs', type=int, help='Number of processors used in parrallel',
-              default=mp.cpu_count())
+@click.option('--nprocs', required=True, type=int, help='Number of processors used in parrallel')
 @_compression_options
 def main(
         brdf_dir: click.Path,

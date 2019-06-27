@@ -484,7 +484,7 @@ def concatenate_files(
     geom_mask = None
     transform = None
 
-    with atomic_h5_write(outfile, 'w') as out_fid:
+    with atomic_h5_write(Path(outfile), 'w') as out_fid:
         # Sorting works since No. of bands < 10
         # note that 3 hdf5 datasets will show consecutively per band
         for fp in sorted(infile_paths):
@@ -493,7 +493,7 @@ def concatenate_files(
                     if 'BRDF_Albedo_Parameters_' in ds_band:
                         _band = in_fid[ds_band]
                         if not transform:
-                            transform = Affine(_band.attrs['geotransform'])
+                            transform = Affine(*_band.attrs['geotransform'])
                         nodata_value = _band.attrs['_FillValue']
                         albedo_params = _band[()]
                         if geom_mask:

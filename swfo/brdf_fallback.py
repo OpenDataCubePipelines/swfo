@@ -500,7 +500,7 @@ def concatenate_files(
                             geom_mask |= np.logical_or(*((albedo_params[layer] != nodata_value)
                                                          for layer in DTYPE_MAIN.names))
                         else:
-                            geom_mask = np.logical_or(*((albedo_params[layer] != nodata_value, )
+                            geom_mask = np.logical_or(*((albedo_params[layer] != nodata_value)
                                                         for layer in DTYPE_MAIN.names))
                     in_fid.copy(source=ds_band, dest=out_fid)
         # Calculate valid bounds from source ISO, VOL, GEO params

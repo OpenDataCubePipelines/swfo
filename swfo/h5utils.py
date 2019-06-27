@@ -70,7 +70,7 @@ def _write_dataset(
     dataset_path = dataset_path.lstrip('/')
     doc_group = '/'.join((PRIVATE_NAMESPACE, dataset_path))
     if not h5_group.get(doc_group):
-        _create_groups(h5_group, doc_group, track_order=track_order)
+        create_groups(h5_group, doc_group, track_order=track_order)
 
     doc_id = str(_get_next_md_id(h5_group, doc_group))
     ds = h5_group.create_dataset(
@@ -96,7 +96,7 @@ def _write_dataset(
     return h5_group[public_path]
 
 
-def _create_groups(root: h5py.Group, group_path: str, track_order: bool = True):
+def create_groups(root: h5py.Group, group_path: str, track_order: bool = True):
     """
     Create hdf5.Group chain ensuring that the track order parameter is set at
     each level if the group is absent
@@ -172,8 +172,8 @@ def _append_data_to_existing_file(inh5: h5py.Group, outh5: h5py.Group, track_ord
         else:
             for ds_path in _traverse(inh5, k):
                 if track_order:
-                    _create_groups(inh5, ds_path.rsplit('/', 1)[0],
-                                   track_order=track_order)
+                    create_groups(inh5, ds_path.rsplit('/', 1)[0],
+                                  track_order=track_order)
                 outh5.create_dataset(ds_path, data=inh5[ds_path])
 
     write_h5_md(outh5, md_docs, md_names)

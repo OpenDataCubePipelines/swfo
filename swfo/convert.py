@@ -20,6 +20,7 @@ from eodatasets.prepare import (
     noaa_c_c_prwtreatm_1_prepare as water_vapour,
     nasa_c_m_mcd43a1_6_prepare as modis_brdf
 )
+from eodatasets.prepare.utils import ItemProvider
 
 from wagl.hdf5.compression import H5CompressionFilter
 
@@ -217,7 +218,7 @@ def mcd43a1_tile_with_md(fname, outdir, md_file, compression, filter_opts):
 
     md['properties']['item:providers'].append({
         'name': 'GeoscienceAustralia',
-        'roles': ['host'],
+        'roles': [ItemProvider.HOST.value],
     })
 
     with atomic_h5_write(out_fname, 'w') as out_h5:
@@ -333,7 +334,7 @@ def pr_wtr_md_cmd(fname, outdir, compression, filter_opts):
         for measurement in _md['measurements']:
             layer_name = (
                 dateutil.parser.parse(_md['datetime'])
-                .strftime('//%Y/%B-%d/%H%M')
+                .strftime('/%Y/%B-%d/%H%M')
                 .upper()
             )
             _md['measurements'][measurement]['layer'] = layer_name
@@ -343,7 +344,7 @@ def pr_wtr_md_cmd(fname, outdir, compression, filter_opts):
 
         _md['properties']['item:providers'].append({
             'name': 'GeoscienceAustralia',
-            'roles': ['host'],
+            'roles': [ItemProvider.HOST.value],
         })
 
     with atomic_h5_write(out_fname, 'w') as out_h5:

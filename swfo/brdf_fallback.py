@@ -496,7 +496,7 @@ def concatenate_files(
                             transform = Affine(*_band.attrs['geotransform'])
                         nodata_value = _band.attrs['_FillValue']
                         albedo_params = _band[()]
-                        if geom_mask:
+                        if geom_mask is not None:
                             geom_mask |= np.logical_or(*((albedo_params[layer] != nodata_value)
                                                          for layer in DTYPE_MAIN.names))
                         else:

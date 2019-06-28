@@ -493,7 +493,7 @@ def concatenate_files(
                     if 'BRDF_Albedo_Parameters_' in ds_band:
                         _band = in_fid[ds_band]
                         if not transform:
-                            transform = Affine(*_band.attrs['geotransform'])
+                            transform = Affine.from_gdal(*_band.attrs['geotransform'])
                         nodata_value = _band.attrs['_FillValue']
                         albedo_params = _band[()]
                         if geom_mask is not None:

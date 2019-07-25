@@ -21,6 +21,9 @@ setup(name='swfo',
           'shapely',
           'wagl',
       ],
+      dependency_links=[
+          'git+https://github.com/GeoscienceAustralia/wagl@develop#egg=wagl',
+      ],
       extras_require=dict(
           test=[
               'pytest',

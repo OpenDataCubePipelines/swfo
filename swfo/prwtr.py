@@ -293,7 +293,7 @@ def fallback(indir, outdir, compression=H5CompressionFilter.LZF,
     # Set one creation datetime for all datasets
     creation_dt = (
         datetime.utcnow()
-        .replace(tzinfo=timezone.utc).isoformat(),
+        .replace(tzinfo=timezone.utc).isoformat()
     )
 
     # create output file

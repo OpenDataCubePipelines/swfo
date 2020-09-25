@@ -30,8 +30,8 @@ def metadata_dataframe(dataset):
     """
     # column names
     tag_data = {k: [] for k in dataset.tags(1).keys()}
-    tag_data['timestamp'] = []
-    tag_data['description'] = []
+    tag_data["timestamp"] = []
+    tag_data["description"] = []
 
     for band in range(1, dataset.count + 1):
         tags = dataset.tags(band)
@@ -39,7 +39,7 @@ def metadata_dataframe(dataset):
             tag_data[tag].append(tags[tag])
 
         # create datetime object from seconds stored as str
-        seconds = int(tags['GRIB_REF_TIME'].strip().split(' ')[0])
+        seconds = int(tags["GRIB_REF_TIME"].strip().split(" ")[0])
         # TODO on the HDF5 read, cater for datetime64([ns, UTC])
         # which NumPy doesn't recognise (pandas does though)
         # also fromtimestamp without specifying timezone
@@ -47,10 +47,10 @@ def metadata_dataframe(dataset):
         # tstamp = datetime.fromtimestamp(seconds, timezone.utc)
         # TODO cater for timezones
         tstamp = datetime.utcfromtimestamp(seconds)
-        tag_data['timestamp'].append(tstamp)
+        tag_data["timestamp"].append(tstamp)
 
         # description
-        tag_data['description'].append(dataset.descriptions[band - 1])
+        tag_data["description"].append(dataset.descriptions[band - 1])
 
     return pandas.DataFrame(tag_data)
 
@@ -60,21 +60,21 @@ def _convert_2d(rds, fid, dataset_name, compression, filter_opts):
     Private routine for converting the 2D GRIB file to HDF5.
     """
     attrs = {
-        'geotransform': rds.transform.to_gdal(),
-        'crs_wkt': rds.crs.wkt,
-        'history': 'Converted to HDF5'
+        "geotransform": rds.transform.to_gdal(),
+        "crs_wkt": rds.crs.wkt,
+        "history": "Converted to HDF5",
     }
     data = rds.read(1)
     write_h5_image(data, dataset_name, fid, compression, attrs, filter_opts)
 
     # add dimension labels, but should we also include dimension scales?
     dataset = fid[dataset_name]
-    dataset.dims[0].label = 'Y'
-    dataset.dims[1].label = 'X'
+    dataset.dims[0].label = "Y"
+    dataset.dims[1].label = "X"
 
     # metadata
     metadata = metadata_dataframe(rds)
-    write_dataframe(metadata, 'METADATA', fid, compression)
+    write_dataframe(metadata, "METADATA", fid, compression)
 
 
 def _convert_3d(rds, fid, dataset_name, compression, filter_opts):
@@ -84,41 +84,37 @@ def _convert_3d(rds, fid, dataset_name, compression, filter_opts):
     """
     # basic metadata to attach to the dataset
     attrs = {
-        'geotransform': rds.transform.to_gdal(),
-        'crs_wkt': rds.crs.wkt,
-        'history': 'Converted to HDF5'
+        "geotransform": rds.transform.to_gdal(),
+        "crs_wkt": rds.crs.wkt,
+        "history": "Converted to HDF5",
     }
 
     # bands list, nrows to process (ytile)
     bands = list(range(1, rds.count + 1))
-    ytile = filter_opts['chunks'][1]
+    ytile = filter_opts["chunks"][1]
     dims = (rds.count, rds.height, rds.width)
 
     # dataset creation options
     kwargs = compression.config(**filter_opts).dataset_compression_kwargs()
-    kwargs['shape'] = dims
-    kwargs['dtype'] = rds.dtypes[0]
+    kwargs["shape"] = dims
+    kwargs["dtype"] = rds.dtypes[0]
 
     dataset = fid.create_dataset(dataset_name, **kwargs)
     attach_image_attributes(dataset, attrs)
 
     # add dimension labels, but should we also include dimension scales?
-    dataset.dims[0].label = 'Atmospheric Level'
-    dataset.dims[1].label = 'Y'
-    dataset.dims[2].label = 'X'
+    dataset.dims[0].label = "Atmospheric Level"
+    dataset.dims[1].label = "Y"
+    dataset.dims[2].label = "X"
 
     # process by tile
     for tile in generate_tiles(rds.width, rds.height, rds.width, ytile):
-        idx = (
-            slice(None),
-            slice(tile[0][0], tile[0][1]),
-            slice(tile[1][0], tile[1][1])
-        )
+        idx = (slice(None), slice(tile[0][0], tile[0][1]), slice(tile[1][0], tile[1][1]))
         dataset[idx] = rds.read(bands, window=tile)
 
     # metadata
     metadata = metadata_dataframe(rds)
-    write_dataframe(metadata, 'METADATA', fid, compression)
+    write_dataframe(metadata, "METADATA", fid, compression)
 
 
 def _convert_4d(rds, fid, dataset_name, compression, filter_opts):
@@ -129,30 +125,30 @@ def _convert_4d(rds, fid, dataset_name, compression, filter_opts):
         * (day, atmospheric level, y, x)
     """
     attrs = {
-        'geotransform': rds.transform.to_gdal(),
-        'crs_wkt': rds.crs.wkt,
-        'history': 'Converted to HDF5'
+        "geotransform": rds.transform.to_gdal(),
+        "crs_wkt": rds.crs.wkt,
+        "history": "Converted to HDF5",
     }
 
     # band groups of 37, nrows to process (ytile)
     band_groups = range(1, rds.count + 1, 37)
-    ytile = filter_opts['chunks'][2]
+    ytile = filter_opts["chunks"][2]
     dims = (len(band_groups), 37, rds.height, rds.width)
     tiles = generate_tiles(rds.width, rds.height, rds.width, ytile)
 
     # dataset creation options
     kwargs = compression.config(**filter_opts).dataset_compression_kwargs()
-    kwargs['shape'] = dims
-    kwargs['dtype'] = rds.dtypes[0]
+    kwargs["shape"] = dims
+    kwargs["dtype"] = rds.dtypes[0]
 
     dataset = fid.create_dataset(dataset_name, **kwargs)
     attach_image_attributes(dataset, attrs)
 
     # add dimension labels, but should we also include dimension scales?
-    dataset.dims[0].label = 'Day'
-    dataset.dims[1].label = 'Atmospheric Level'
-    dataset.dims[2].label = 'Y'
-    dataset.dims[3].label = 'X'
+    dataset.dims[0].label = "Day"
+    dataset.dims[1].label = "Atmospheric Level"
+    dataset.dims[2].label = "Y"
+    dataset.dims[3].label = "X"
 
     # process by spatial tile containing 37 atmospheric layers for 1 day
     for i, bg in enumerate(band_groups):
@@ -162,17 +158,16 @@ def _convert_4d(rds, fid, dataset_name, compression, filter_opts):
                 slice(i, bg),
                 slice(None),
                 slice(tile[0][0], tile[0][1]),
-                slice(tile[1][0], tile[1][1])
+                slice(tile[1][0], tile[1][1]),
             )
             dataset[idx] = rds.read(bands, window=tile)
 
     # metadata
     metadata = metadata_dataframe(rds)
-    write_dataframe(metadata, 'METADATA', fid, compression)
+    write_dataframe(metadata, "METADATA", fid, compression)
 
 
-def convert(fname, base_outdir, compression=H5CompressionFilter.LZF,
-            filter_opts=None):
+def convert(fname, base_outdir, compression=H5CompressionFilter.LZF, filter_opts=None):
     """
     Convert ECWMF GRIB files to HDF5.
     Each output file will contain 2 HDF5 Datasets:
@@ -184,13 +179,11 @@ def convert(fname, base_outdir, compression=H5CompressionFilter.LZF,
     base_outdir = Path(base_outdir)
 
     # 2D & 3D fname format "{product_name}_{yyyy-mm-dd}"
-    product, date = fname.stem.split('_')
+    product, date = fname.stem.split("_")
 
     # {base_dir}/{product_name}/{year}/{product_name}_{yyyy-mm-dd}.h5
     out_fname = base_outdir.joinpath(
-        product,
-        date.split('-')[0],
-        fname.with_suffix('.h5').name
+        product, date.split("-")[0], fname.with_suffix(".h5").name
     )
 
     # create empty or copy the user supplied filter options
@@ -200,32 +193,32 @@ def convert(fname, base_outdir, compression=H5CompressionFilter.LZF,
         filter_opts = filter_opts.copy()
 
     # use sds native chunks if none are provided
-    if 'chunks' not in filter_opts:
-        filter_opts['chunks'] = (64, 64)
+    if "chunks" not in filter_opts:
+        filter_opts["chunks"] = (64, 64)
 
     # create directories as needed
     if not out_fname.parent.exists():
         out_fname.parent.mkdir(parents=True)
 
-    with h5py.File(str(out_fname), 'w') as fid:
+    with h5py.File(str(out_fname), "w") as fid:
         with rasterio.open(fname) as rds:
             if rds.count == 1:
                 # convert 2D
                 _convert_2d(rds, fid, product, compression, filter_opts)
             elif rds.count == 37:
                 # convert 3D (37 atmospheric layers)
-                if len(filter_opts['chunks']) != 3:
-                    chunks = list(filter_opts['chunks'])
+                if len(filter_opts["chunks"]) != 3:
+                    chunks = list(filter_opts["chunks"])
                     chunks.insert(0, 37)
-                    filter_opts['chunks'] = tuple(chunks)
+                    filter_opts["chunks"] = tuple(chunks)
                 _convert_3d(rds, fid, product, compression, filter_opts)
             elif not rds.count % 37:
                 # convert 4D (eg months worth of 37 atmospheric layers)
-                if len(filter_opts['chunks']) != 4:
-                    chunks = list(filter_opts['chunks'])
+                if len(filter_opts["chunks"]) != 4:
+                    chunks = list(filter_opts["chunks"])
                     chunks.insert(0, 37)
                     chunks.insert(0, 1)
-                    filter_opts['chunks'] = tuple(chunks)
+                    filter_opts["chunks"] = tuple(chunks)
                 _convert_4d(rds, fid, product, compression, filter_opts)
             else:
                 # don't have multiples of 37

@@ -18,14 +18,17 @@ from wagl.tiling import generate_tiles
 from wagl.constants import BrdfModelParameters
 
 
-OUT_DTYPE = numpy.dtype([
-    (BrdfModelParameters.ISO.value, 'int16'),
-    (BrdfModelParameters.VOL.value, 'int16'),
-    (BrdfModelParameters.GEO.value, 'int16')
-])
+OUT_DTYPE = numpy.dtype(
+    [
+        (BrdfModelParameters.ISO.value, "int16"),
+        (BrdfModelParameters.VOL.value, "int16"),
+        (BrdfModelParameters.GEO.value, "int16"),
+    ]
+)
 
-RASTERIO_PREFIX = 'tar:{}!'
-GDAL_PREFIX = '/vsitar/{}'
+RASTERIO_PREFIX = "tar:{}!"
+GDAL_PREFIX = "/vsitar/{}"
+
 
 def _brdf_netcdf_band_orderer(band_name: str):
     """
@@ -37,7 +40,7 @@ def _brdf_netcdf_band_orderer(band_name: str):
     :param band_name:
         netcdf4 subdataset name
     """
-    return band_name.split('_')[-2:]
+    return band_name.split("_")[-2:]
 
 
 def convert_tile(fname, out_h5: h5py.Group, compression, filter_opts):
@@ -72,10 +75,10 @@ def convert_tile(fname, out_h5: h5py.Group, compression, filter_opts):
     with rasterio.open(fname) as ds:
         for sds_name in ds.subdatasets:
             with rasterio.open(sds_name) as sds:
-                band_name = sds_name.split(':')[-1]
+                band_name = sds_name.split(":")[-1]
                 geospatial[band_name] = {
-                    'geotransform': sds.transform.to_gdal(),
-                    'crs_wkt': sds.crs.wkt
+                    "geotransform": sds.transform.to_gdal(),
+                    "crs_wkt": sds.crs.wkt,
                 }
 
     # convert data
@@ -98,11 +101,11 @@ def convert_tile(fname, out_h5: h5py.Group, compression, filter_opts):
 
             # Recreate datasets as 2-dimensional dataset
             dim1, dim2, *_ = sds.shape
-            if 'chunks' not in f_opts:
+            if "chunks" not in f_opts:
                 assert dim1 == 2400 and dim2 == 2400
-                f_opts['chunks'] = (240, 240)
+                f_opts["chunks"] = (240, 240)
             else:
-                f_opts['chunks'] = (f_opts[0], f_opts[1])
+                f_opts["chunks"] = (f_opts[0], f_opts[1])
 
             # subdataset attributes and spatial attributes
             attrs = {key: sds.getncattr(key) for key in sds.ncattrs()}
@@ -119,9 +122,14 @@ def convert_tile(fname, out_h5: h5py.Group, compression, filter_opts):
                 data = in_arr
 
             # write to disk as an IMAGE Class Dataset
-            write_h5_image(data, sds_name, out_h5, attrs=attrs,
-                           compression=compression,
-                           filter_opts=f_opts)
+            write_h5_image(
+                data,
+                sds_name,
+                out_h5,
+                attrs=attrs,
+                compression=compression,
+                filter_opts=f_opts,
+            )
 
 
 def buildvrt(indir, outdir):
@@ -133,11 +141,11 @@ def buildvrt(indir, outdir):
 
     # loop over each day directory
     for day in indir.iterdir():
-        # expecting 20 subdatasets in each hdf4 file (hopefully the order gdal lists them in is consistent)
+        # expecting 20 subdatasets in each hdf4 file (hopefully the order gdal lists them in is consistent)  # noqa: E501 # pylint: disable=line-too-long
         subdataset_fnames = {i: [] for i in range(20)}
 
         # mosaic each MODIS tile for the current day directory
-        for h4_fname in day.rglob('*.hdf'):
+        for h4_fname in day.rglob("*.hdf"):
             with rasterio.open(str(h4_fname.absolute())) as h4_ds:
 
                 # each subdataset will form a separate mosaic
@@ -148,31 +156,31 @@ def buildvrt(indir, outdir):
         for _, file_list in subdataset_fnames.items():
 
             # temp file for the input file list
-            with tempfile.NamedTemporaryFile('w') as tmpf:
+            with tempfile.NamedTemporaryFile("w") as tmpf:
                 tmpf.writelines("\n".join(file_list))
                 tmpf.flush()
 
                 # mimic the 'day' directory partition
-                base_name = Path(file_list[0].replace(':', '/')).name
-                out_fname = outdir.joinpath(day.name, '{}.vrt'.format(base_name))
+                base_name = Path(file_list[0].replace(":", "/")).name
+                out_fname = outdir.joinpath(day.name, "{}.vrt".format(base_name))
 
                 if not out_fname.parent.exists():
                     out_fname.parent.mkdir(parents=True)
 
                 # buildvrt
-                cmd = [
-                    'gdalbuildvrt',
-                    '-input_file_list',
-                    tmpf.name,
-                    str(out_fname)
-                ]
+                cmd = ["gdalbuildvrt", "-input_file_list", tmpf.name, str(out_fname)]
 
                 check_call(cmd)
 
 
-def convert_vrt(fname, out_h5: h5py.Group, dataset_name='dataset',
-                compression=H5CompressionFilter.LZF, filter_opts=None,
-                attrs=None):
+def convert_vrt(
+    fname,
+    out_h5: h5py.Group,
+    dataset_name="dataset",
+    compression=H5CompressionFilter.LZF,
+    filter_opts=None,
+    attrs=None,
+):
     """
     Convert the VRT mosaic to HDF5.
     """
@@ -188,19 +196,19 @@ def convert_vrt(fname, out_h5: h5py.Group, dataset_name='dataset',
         # create empty or copy the user supplied filter options
         if not filter_opts:
             filter_opts = dict()
-            filter_opts['chunks'] = chunks
+            filter_opts["chunks"] = chunks
         else:
             filter_opts = filter_opts.copy()
 
-        if 'chunks' not in filter_opts:
-            filter_opts['chunks'] = chunks
+        if "chunks" not in filter_opts:
+            filter_opts["chunks"] = chunks
 
         # modify to have 3D chunks if we have a multiband vrt
-        if rds.count == 3 and len(filter_opts['chunks']) != 3:
+        if rds.count == 3 and len(filter_opts["chunks"]) != 3:
             # copy the users original 2D chunk and insert the third
-            chunks = list(filter_opts['chunks'])
+            chunks = list(filter_opts["chunks"])
             chunks.insert(0, 3)
-            filter_opts['chunks'] = chunks
+            filter_opts["chunks"] = chunks
 
         # dataset attributes
         if attrs:
@@ -208,20 +216,20 @@ def convert_vrt(fname, out_h5: h5py.Group, dataset_name='dataset',
         else:
             attrs = {}
 
-        attrs['geotransform'] = rds.transform.to_gdal()
-        attrs['crs_wkt'] = rds.crs.wkt
-        attrs['nodata'] = rds.nodata
+        attrs["geotransform"] = rds.transform.to_gdal()
+        attrs["crs_wkt"] = rds.crs.wkt
+        attrs["nodata"] = rds.nodata
 
         # dataset creation options
         kwargs = compression.config(**filter_opts).dataset_compression_kwargs()
-        kwargs['shape'] = dims
-        kwargs['dtype'] = rds.dtypes[0]
+        kwargs["shape"] = dims
+        kwargs["dtype"] = rds.dtypes[0]
 
         dataset = out_h5.create_dataset(dataset_name, **kwargs)
         attach_image_attributes(dataset, attrs)
 
         # tiled processing (all cols by chunked rows)
-        ytile = filter_opts['chunks'][1] if rds.count == 3 else filter_opts['chunks'][0]
+        ytile = filter_opts["chunks"][1] if rds.count == 3 else filter_opts["chunks"][0]
         tiles = generate_tiles(rds.width, rds.height, rds.width, ytile)
 
         for tile in tiles:
@@ -230,13 +238,10 @@ def convert_vrt(fname, out_h5: h5py.Group, dataset_name='dataset',
                 idx = (
                     slice(None),
                     slice(tile[0][0], tile[0][1]),
-                    slice(tile[1][0], tile[1][1])
+                    slice(tile[1][0], tile[1][1]),
                 )
             else:
-                idx = (
-                    slice(tile[0][0], tile[0][1]),
-                    slice(tile[1][0], tile[1][1])
-                )
+                idx = (slice(tile[0][0], tile[0][1]), slice(tile[1][0], tile[1][1]))
 
             # ensure single band rds is read as 2D not 3D
             data = rds.read(window=tile) if rds.count == 3 else rds.read(1, window=tile)

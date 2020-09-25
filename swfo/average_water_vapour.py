@@ -21,15 +21,15 @@ def build_index(indir):
     index.
     The records are sorted in ascending time (earliest to most recent)
     """
-    df = pandas.DataFrame(columns=['filename', 'band_name', 'timestamp'])
+    df = pandas.DataFrame(columns=["filename", "band_name", "timestamp"])
     for fname in Path(indir).glob("pr_wtr.eatm.*.h5"):
-        with h5py.File(str(fname), 'r') as fid:
-            tmp_df = read_h5_table(fid, 'INDEX')
-            tmp_df['filename'] = fid.filename
+        with h5py.File(str(fname), "r") as fid:
+            tmp_df = read_h5_table(fid, "INDEX")
+            tmp_df["filename"] = fid.filename
             df = df.append(tmp_df)
 
-    df.sort_values('timestamp', inplace=True)
-    df.set_index('timestamp', inplace=True)
+    df.sort_values("timestamp", inplace=True)
+    df.set_index("timestamp", inplace=True)
 
     return df
 
@@ -52,7 +52,7 @@ def calculate_average(dataframe):
         with h5py.File(row.filename, "r") as fid:
             ds = fid[row.band_name]
             ds.read_direct(data[i])
-            no_data = float(ds.attrs['missing_value'])
+            no_data = float(ds.attrs["missing_value"])
 
         # check for nodata and convert to nan
         # do this for each dataset in case the nodata value changes
@@ -69,8 +69,7 @@ def calculate_average(dataframe):
     return mean, geobox, chunks
 
 
-def prwtr_average(indir, outdir, compression=H5CompressionFilter.LZF,
-                  filter_opts=None):
+def prwtr_average(indir, outdir, compression=H5CompressionFilter.LZF, filter_opts=None):
     """
     Take the 4 hourly daily average from all files.
     """
@@ -85,7 +84,7 @@ def prwtr_average(indir, outdir, compression=H5CompressionFilter.LZF,
         out_fname.parent.mkdir(parents=True)
 
     # create output file
-    with h5py.File(str(out_fname), 'w') as fid:
+    with h5py.File(str(out_fname), "w") as fid:
 
         # the data is ordered so we can safely use BAND-1 = Jan-1
         for band_index, item in enumerate(groups):
@@ -103,13 +102,15 @@ def prwtr_average(indir, outdir, compression=H5CompressionFilter.LZF,
             dname = "AVERAGE/{}".format(dtime.strftime("%B-%d/%H%M").upper())
 
             # dataset description
-            description = ("Average data for {year_month} {hour}00 hours, "
-                           "over the timeperiod {dt_min} to {dt_max}")
+            description = (
+                "Average data for {year_month} {hour}00 hours, "
+                "over the timeperiod {dt_min} to {dt_max}"
+            )
             description = description.format(
                 year_month=dtime.strftime("%B-%d"),
                 hour=dtime.strftime("%H"),
                 dt_min=grp_df.index.min(),
-                dt_max=grp_df.index.max()
+                dt_max=grp_df.index.max(),
             )
 
             # dataset attributes
@@ -119,7 +120,7 @@ def prwtr_average(indir, outdir, compression=H5CompressionFilter.LZF,
                 "date_format": "2000 %B-%d/%H%M",
                 "band_name": "BAND-{}".format(band_index + 1),
                 "geotransform": geobox.transform.to_gdal(),
-                "crs_wkt": geobox.crs.ExportToWkt()
+                "crs_wkt": geobox.crs.ExportToWkt(),
             }
 
             # create empty or copy the user supplied filter options
@@ -129,9 +130,10 @@ def prwtr_average(indir, outdir, compression=H5CompressionFilter.LZF,
                 f_opts = filter_opts.copy()
 
             # use original chunks if none are provided
-            if 'chunks' not in f_opts:
-                f_opts['chunks'] = chunks
+            if "chunks" not in f_opts:
+                f_opts["chunks"] = chunks
 
             # write
-            write_h5_image(mean, dname, fid, attrs=attrs,
-                           compression=compression, filter_opts=f_opts)
+            write_h5_image(
+                mean, dname, fid, attrs=attrs, compression=compression, filter_opts=f_opts
+            )

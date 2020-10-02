@@ -1,2 +1,0 @@
-include versioneer.py
-include swfo/_version.py

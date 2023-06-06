@@ -260,9 +260,20 @@ def get_qualityband_count_window(
 ):
     """ returns sum of good quality data count per pixels for a window. """
 
-    def read_quality_data(filename: str):
-        with h5py.File(filename, "r") as fid:
-            return 1.0 - read_brdf_quality_dataset(fid[band_name], window)
+    def read_quality_data(filename: str): 
+        ''' 
+        This function maps the value from read_brdf_quality_dataset 
+        to get a good quality data count. A 'good quality' pixel is 
+        assumed to be where the quality bit index is 0 i.e. 
+        "Processed, good quality (full BRDF inversions)" 
+        '''
+        with h5py.File(filename, "r") as fid: 
+            # Define quality array 
+            qual_array = read_brdf_quality_dataset(fid[band_name], window)
+            # Where the array is 0 (good quality), map to 1.0 and 0.0 everywhere else
+            good_qual_data = (qual_array == 0).astype(float)
+            # Preserve nans from original array
+            return np.where(np.isnan(qual_array), np.nan, good_qual_data)
 
     first, *rest = list(h5_info)
 

@@ -128,7 +128,7 @@ def folder_doy(folder: str) -> int:
 
 
 def shape_of_window(window):
-    """ returns a shape from a window. """
+    """returns a shape from a window."""
 
     y_shape = window[0].stop - window[0].start
     x_shape = window[1].stop - window[1].start
@@ -258,17 +258,17 @@ def read_brdf_dataset(ds, param, window=None):
 def get_qualityband_count_window(
     h5_info: Dict, band_name: str, window: Iterable[Iterable[int]]
 ):
-    """ returns sum of good quality data count per pixels for a window. """
+    """returns sum of good quality data count per pixels for a window."""
 
-    def read_quality_data(filename: str): 
-        ''' 
-        This function maps the value from read_brdf_quality_dataset 
-        to get a good quality data count. A 'good quality' pixel is 
-        assumed to be where the quality bit index is 0 i.e. 
-        "Processed, good quality (full BRDF inversions)" 
-        '''
-        with h5py.File(filename, "r") as fid: 
-            # Define quality array 
+    def read_quality_data(filename: str):
+        """
+        This function maps the value from read_brdf_quality_dataset
+        to get a good quality data count. A 'good quality' pixel is
+        assumed to be where the quality bit index is 0 i.e.
+        "Processed, good quality (full BRDF inversions)"
+        """
+        with h5py.File(filename, "r") as fid:
+            # Define quality array
             qual_array = read_brdf_quality_dataset(fid[band_name], window)
             # Where the array is 0 (good quality), map to 1.0 and 0.0 everywhere else
             good_qual_data = (qual_array == 0).astype(float)
@@ -639,7 +639,7 @@ def create_dataset(
     compression: H5CompressionFilter = H5CompressionFilter.LZF,
     filter_opts: Optional[Dict] = None,
 ):
-    """ creates dataset and attaches attributes for h5 object. """
+    """creates dataset and attaches attributes for h5 object."""
 
     if filter_opts is None:
         filter_opts = {}
@@ -666,7 +666,7 @@ def create_brdf_datasets(
     compression: H5CompressionFilter = H5CompressionFilter.LZF,
     filter_opts: Optional[Dict] = None,
 ):
-    """ creates brdf dataset for brdf parameters. """
+    """creates brdf dataset for brdf parameters."""
 
     attrs = dict(
         scale_factor=SCALE_FACTOR,
@@ -1271,7 +1271,7 @@ def main(
     compression: H5CompressionFilter,
     filter_opts: Optional[Dict] = None,
 ):
-    """ main function to execute brdf fallback computation for a MODIS tile. """
+    """main function to execute brdf fallback computation for a MODIS tile."""
 
     write_brdf_fallback(
         brdf_dir=Path(brdf_dir),

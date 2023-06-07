@@ -101,8 +101,8 @@ def get_mean_shape_param(fiso_mean, fvol_mean, fgeo_mean, cov_iso):
         alpha2_mean: 'array' of mean brdf shape parameter fgeo/fiso
     """
 
-    alpha1_mean = (fvol_mean / fiso_mean) * (1 + cov_iso ** 2)
-    alpha2_mean = (fgeo_mean / fiso_mean) * (1 + cov_iso ** 2)
+    alpha1_mean = (fvol_mean / fiso_mean) * (1 + cov_iso**2)
+    alpha2_mean = (fgeo_mean / fiso_mean) * (1 + cov_iso**2)
 
     return alpha1_mean, alpha2_mean
 
@@ -121,8 +121,8 @@ def get_cov_shape_param(cov_iso, cov_vol, cov_geo):
         alpha2_cov = 'array' of coefficient of variation for alpha2
     """
 
-    alpha1_cov = np.sqrt((1 + cov_vol ** 2) * (1 + cov_iso ** 2) - 1)
-    alpha2_cov = np.sqrt((1 + cov_geo ** 2) * (1 + cov_iso ** 2) - 1)
+    alpha1_cov = np.sqrt((1 + cov_vol**2) * (1 + cov_iso**2) - 1)
+    alpha2_cov = np.sqrt((1 + cov_geo**2) * (1 + cov_iso**2) - 1)
 
     return alpha1_cov, alpha2_cov
 
@@ -170,7 +170,7 @@ def get_std_rms_indices(alpha1_mean, alpha2_mean, alpha1_cov, alpha2_cov, rms):
 
     t1 = (
         (
-            (CONSTANTS["c11"] * alpha1_mean ** 2)
+            (CONSTANTS["c11"] * alpha1_mean**2)
             + (CONSTANTS["c12"] * alpha1_mean * alpha2_mean)
         )
         * alpha1_cov
@@ -178,7 +178,7 @@ def get_std_rms_indices(alpha1_mean, alpha2_mean, alpha1_cov, alpha2_cov, rms):
     t2 = (
         (
             (CONSTANTS["c12"] * alpha1_mean * alpha2_mean)
-            + (CONSTANTS["c22"] * alpha2_mean ** 2)
+            + (CONSTANTS["c22"] * alpha2_mean**2)
         )
         * alpha2_cov
     ) ** 2
@@ -199,5 +199,5 @@ def get_unfeasible_mask(rms, afx):
     """
     a = CONSTANTS["ra"]
     b = CONSTANTS["rb"] * (afx - 1)
-    c = CONSTANTS["rc"] * (afx - 1) ** 2 - rms ** 2
-    return np.ma.masked_where(b ** 2 < a * c, rms).mask
+    c = CONSTANTS["rc"] * (afx - 1) ** 2 - rms**2
+    return np.ma.masked_where(b**2 < a * c, rms).mask

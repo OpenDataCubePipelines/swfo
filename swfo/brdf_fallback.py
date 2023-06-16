@@ -42,8 +42,8 @@ BAND_LIST = ["Band{}".format(band) for band in range(1, 8)]
 FALLBACK_PRODUCT_HREF = "https://collections.dea.ga.gov.au/ga_c_m_brdfalbedo_2"
 FALLBACK_NAMESPACE = uuid.UUID("5acf51a2-8129-4318-944e-9eaed6a56786")
 
-BRDF_AVG_FILE_BAND_FMT = "MCD43A1.JLAV.006.{}.DOY.{:03}.{}.h5"
-BRDF_AVG_FILE_FMT = "MCD43A1.JLAV.006.{}.DOY.{:03}.h5"
+BRDF_AVG_FILE_BAND_FMT = "MCD43A1.JLAV.061.{}.DOY.{:03}.{}.h5"
+BRDF_AVG_FILE_FMT = "MCD43A1.JLAV.061.{}.DOY.{:03}.h5"
 BRDF_MATCH_PATTERN = "*{}.DOY.{:03}*Band*.h5"
 
 LOCKS = {}

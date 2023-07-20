@@ -256,9 +256,17 @@ def read_brdf_dataset(ds, param, window=None):
 
 
 def get_qualityband_count_window(
-    h5_info: Dict, band_name: str, window: Iterable[Iterable[int]]
+    h5_info: Dict, band_name: str, window: Iterable[Iterable[int]], include_quality_values: Iterable[int] = None, exclude_quality_values: Iterable[int] = None
 ):
     """returns sum of good quality data count per pixels for a window."""
+
+    error_msg = "Please provide include_quality_values OR exclude_quality_values."
+    
+    # Throw error when both include_quality_values and exclude_quality_values are None
+    assert ((include_quality_values is not None) or (exclude_quality_values is not None)), error_msg
+
+    # Throw error when both include_quality_values and exclude_quality_values are not None
+    assert ((include_quality_values is None) or (exclude_quality_values is None)), error_msg
 
     def read_quality_data(filename: str):
         """
@@ -270,10 +278,15 @@ def get_qualityband_count_window(
         with h5py.File(filename, "r") as fid:
             # Define quality array
             qual_array = read_brdf_quality_dataset(fid[band_name], window)
-            # Where the array is 0 (good quality), map to 1.0 and 0.0 everywhere else
-            good_qual_data = (qual_array == 0).astype(float)
+
+            # Setup new array where quality values to be counted are 1.0
+            if include_quality_values is not None: 
+                quality_count_data = np.isin(qual_array, include_quality_values).astype(float)
+            else: 
+                quality_count_data = ~np.isin(qual_array, exclude_quality_values).astype(float)
+
             # Preserve nans from original array
-            return np.where(np.isnan(qual_array), np.nan, good_qual_data)
+            return np.where(np.isnan(qual_array), np.nan, quality_count_data)
 
     first, *rest = list(h5_info)
 
@@ -299,6 +312,8 @@ def get_qualityband_count(
     shape: Iterable[int],
     compute_chunks: Iterable[int],
     nprocs: int,
+    include_quality_values: Iterable[int] = None, 
+    exclude_quality_values: Iterable[int] = None,
 ):
     """
     This function computes and returns the number of valid pixels
@@ -318,7 +333,7 @@ def get_qualityband_count(
         results = pool.starmap(
             get_qualityband_count_window,
             [
-                (h5_info, band_name, window)
+                (h5_info, band_name, window, include_quality_values, exclude_quality_values)
                 for window in generate_windows(shape, compute_chunks)
             ],
         )
@@ -1288,3 +1303,4 @@ def main(
 
 if __name__ == "__main__":
     main()  # pylint: disable=no-value-for-parameter
+    

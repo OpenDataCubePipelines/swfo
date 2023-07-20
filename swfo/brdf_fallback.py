@@ -64,6 +64,7 @@ DTYPE_MAIN = np.dtype(
         (BrdfModelParameters.GEO.value, "int16"),
     ]
 )
+DTYPE_QUALITY_COUNT = np.dtype([("Q0COUNT", "int16"), ("Q1COUNT", "int16"),("NOTQ0Q1COUNT", "int16")])
 DTYPE_SUPPORT = np.dtype([("AFX", "int16"), ("RMS", "int16")])
 DTYPE_QUALITY = np.dtype([("MASK", "int16"), ("NUM", "int16")])
 
@@ -281,12 +282,12 @@ def get_qualityband_count_window(
 
             # Setup new array where quality values to be counted are 1.0
             if include_quality_values is not None: 
-                quality_count_data = np.isin(qual_array, include_quality_values).astype(float)
+                quality_count_array = np.isin(qual_array, include_quality_values).astype(float)
             else: 
-                quality_count_data = ~np.isin(qual_array, exclude_quality_values).astype(float)
+                quality_count_array= ~np.isin(qual_array, exclude_quality_values).astype(float)
 
             # Preserve nans from original array
-            return np.where(np.isnan(qual_array), np.nan, quality_count_data)
+            return np.where(np.isnan(qual_array), np.nan, quality_count_array)
 
     first, *rest = list(h5_info)
 
@@ -369,7 +370,12 @@ def calculate_combined_mask(afx, rms):
     return rms_afx_mask
 
 
-def brdf_indices_quality_check(avg_data=None):
+def brdf_indices_quality_check(
+    quality_count,
+    quality_count_q1,
+    quality_count_notq0q1,
+    avg_data = None,     
+):
     """
     This function performs the quality check on the temporal averages data.
     The quality check is performed in following steps:
@@ -389,8 +395,9 @@ def brdf_indices_quality_check(avg_data=None):
     :return filtered_data:
          A 'dict' type data that contains the filtered data of brdf
          shape function (alpha1 and alpha2) in lognormal space. Additional
-         data, mean brdf iso parameter, shape indices (rms and afx), mask
-         and number of observations used in generating shape function are
+         data, mean brdf iso parameter, number of observations used in 
+         generating the mean brdf iso parameters, shape indices (rms and afx), 
+         mask and number of observations used in generating shape function are
          also included.
     """
     filtered_data = {}
@@ -452,6 +459,12 @@ def brdf_indices_quality_check(avg_data=None):
         temp[BrdfModelParameters.GEO.value] = np.ma.masked_array(
             alpha2 * iso_mean, mask=combined_mask
         )
+        
+        # Define number of observation used for parameter averages  
+        temp["Q0COUNT"] = quality_count
+        temp["Q1COUNT"] = quality_count_q1
+        temp["NOTQ0Q1COUNT"] = quality_count_notq0q1
+
         temp["AFX"] = np.ma.masked_array(afx, mask=combined_mask)
         temp["RMS"] = np.ma.masked_array(rms, mask=combined_mask)
         temp["MASK"] = np.array(combined_mask)
@@ -744,6 +757,22 @@ def create_brdf_datasets(
         dtype=DTYPE_QUALITY,
     )
 
+    attrs = dict(
+        description=(
+            "Number of observations used"
+            " in generating mean BRDF parameters"
+        ),
+        **common_attrs,
+    )
+    create_dataset(
+        group,
+        "BRDF_Albedo_Parameters_Count_{}".format(band_name),
+        shape,
+        attrs,
+        chunks=chunks,
+        filter_opts=filter_opts,
+        compression=compression,
+        dtype=DTYPE_QUALITY_COUNT)
 
 def write_chunk(data_dict, fid, band, window):
     """
@@ -1043,6 +1072,9 @@ def post_cleanup_process(
     filter_size,
     band,
     bad_indices,
+    quality_count,
+    quality_count_q1,
+    quality_count_notq0q1
 ):
     """
     This function implements gaussian smoothing of the cleaned dataset,
@@ -1057,7 +1089,12 @@ def post_cleanup_process(
 
     for doy in day_numbers:
         avg_data = temporal_average(data_convolved, doy)
-        filtered_data = brdf_indices_quality_check(avg_data=avg_data)
+        filtered_data = brdf_indices_quality_check(
+            quality_count, 
+            quality_count_q1,
+            quality_count_notq0q1,
+            avg_data,
+        )
 
         outfile = pjoin(outdir, BRDF_AVG_FILE_BAND_FMT.format(tile, doy, band))
         with LOCKS[outfile]:
@@ -1095,11 +1132,35 @@ def write_brdf_fallback_band(
         shape=shape,
         compute_chunks=compute_chunks,
         nprocs=nprocs,
+        include_quality_values = [0]
     )
-    quality_count = np.ma.masked_invalid(quality_count)
+
+    # Get count of pixel quality 1 to feed to 
+    # post_cleanup_process() where output is written
+    quality_count_q1 = get_qualityband_count(
+        h5_info=h5_info,
+        band_name=quality_band_name(band),
+        shape=shape,
+        compute_chunks=compute_chunks,
+        nprocs=nprocs,
+        include_quality_values = [1]
+    )
+
+    # Get count of where pixel quality is not equal to 0 or 1 to feed 
+    # to post_cleanup_process() where output is written
+    quality_count_notq0q1 = get_qualityband_count(
+        h5_info=h5_info,
+        band_name=quality_band_name(band),
+        shape=shape,
+        compute_chunks=compute_chunks,
+        nprocs=nprocs,
+        exclude_quality_values = [0,1]
+    )
+
+    quality_count_masked = np.ma.masked_invalid(quality_count)
 
     # get the index where band_quality number is less the minimum number of valid pixels required  # noqa: E501 # pylint: disable=line-too-long
-    bad_indices = (quality_count < min_numpix_required).filled(False)
+    bad_indices = (quality_count_masked < min_numpix_required).filled(False)
 
     thresholds = calculate_thresholds(
         h5_info, albedo_band_name(band), shape, compute_chunks, nprocs=nprocs
@@ -1167,6 +1228,9 @@ def write_brdf_fallback_band(
                     filter_size,
                     band,
                     bad_indices,
+                    quality_count,
+                    quality_count_q1,
+                    quality_count_notq0q1
                 )
                 for window in generate_windows(shape, compute_chunks)
             ],
@@ -1303,4 +1367,3 @@ def main(
 
 if __name__ == "__main__":
     main()  # pylint: disable=no-value-for-parameter
-    

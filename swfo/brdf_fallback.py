@@ -282,12 +282,12 @@ def get_qualityband_count_window(
 
             # Setup new array where quality values to be counted are 1.0
             if include_quality_values is not None: 
-                quality_count_array = np.isin(qual_array, include_quality_values).astype(float)
+                quality_count_array = np.isin(qual_array, include_quality_values)
             else: 
-                quality_count_array= ~np.isin(qual_array, exclude_quality_values).astype(float)
+                quality_count_array= ~np.isin(qual_array, exclude_quality_values)
 
             # Preserve nans from original array
-            return np.where(np.isnan(qual_array), np.nan, quality_count_array)
+            return np.where(np.isnan(qual_array), np.nan, quality_count_array*1.0)
 
     first, *rest = list(h5_info)
 
@@ -460,7 +460,7 @@ def brdf_indices_quality_check(
             alpha2 * iso_mean, mask=combined_mask
         )
         
-        # Define number of observation used for parameter averages  
+        # Define number of observations used for the parameter averages  
         temp["Q0COUNT"] = quality_count
         temp["Q1COUNT"] = quality_count_q1
         temp["NOTQ0Q1COUNT"] = quality_count_notq0q1
@@ -766,7 +766,7 @@ def create_brdf_datasets(
     )
     create_dataset(
         group,
-        "BRDF_Albedo_Parameters_Count_{}".format(band_name),
+        "BRDF_Albedo_Quality_Count_{}".format(band_name),
         shape,
         attrs,
         chunks=chunks,
@@ -804,10 +804,14 @@ def write_chunk(data_dict, fid, band, window):
     for band_name in DTYPE_QUALITY.names:
         data_quality[band_name] = data_dict[key][band_name].astype("int16")
 
+    data_count = np.ndarray(shape, dtype=DTYPE_QUALITY_COUNT)
+    for band_name in DTYPE_QUALITY_COUNT.names: 
+        data_count[band_name] = data_dict[key][band_name].astype("int16")
+
     fid["BRDF_Albedo_Parameters_{}".format(band)][window] = data_main
     fid["BRDF_Albedo_Shape_Indices_{}".format(band)][window] = data_support
     fid["BRDF_Albedo_Shape_Parameters_Quality_{}".format(band)][window] = data_quality
-
+    fid["BRDF_Albedo_Quality_Count_{}".format(band)][window] = data_count
 
 def get_band_info(h5_info: Dict, band_name: str):
     """
@@ -1009,6 +1013,7 @@ def _get_measurement_info() -> Dict:
         "Parameters": DTYPE_MAIN.names,
         "Shape_Indices": DTYPE_SUPPORT.names,
         "Shape_Parameters_Quality": DTYPE_QUALITY.names,
+        "Parameters_Quality": DTYPE_QUALITY_COUNT.names,
     }
 
     measurements = {}
@@ -1090,9 +1095,9 @@ def post_cleanup_process(
     for doy in day_numbers:
         avg_data = temporal_average(data_convolved, doy)
         filtered_data = brdf_indices_quality_check(
-            quality_count, 
-            quality_count_q1,
-            quality_count_notq0q1,
+            quality_count[window], 
+            quality_count_q1[window],
+            quality_count_notq0q1[window],
             avg_data,
         )
 
@@ -1165,7 +1170,7 @@ def write_brdf_fallback_band(
     thresholds = calculate_thresholds(
         h5_info, albedo_band_name(band), shape, compute_chunks, nprocs=nprocs
     )
-    quality_count = None
+    quality_count_masked = None
 
     clean_data_file = pjoin(outdir, "clean_data_{}_{}.h5".format(band, tile))
 
@@ -1176,7 +1181,7 @@ def write_brdf_fallback_band(
             create_dataset(
                 clean_data,
                 key,
-                (3, shape[0], shape[1]),
+                (4, shape[0], shape[1]),
                 {},
                 chunks=(1,) + data_chunks,
                 compression=H5CompressionFilter.LZF,

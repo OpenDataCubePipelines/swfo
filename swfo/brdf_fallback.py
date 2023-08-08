@@ -57,12 +57,23 @@ INV_SCALE_FACTOR = 10000
 SCALE_FACTOR_2 = 0.001
 INV_SCALE_FACTOR_2 = 1000
 
+"""
+Below we define the dtypes of 'structured' numpy arrays that store the following respectively: 
+'MAIN' - The temporal average of the BRDF parameters. 
+'QUALITY_COUNT' - The number of days included in the temporal average with some quality flag(s).
+'SUPPORT' - The BRDF 'shape' parameters, which are used to filter out values outside a valid range. 
+'QUALITY' - Indicates whether a pixel has been masked (due to unfeasible BRDF shape parameters and other filters).
+"""
+
 DTYPE_MAIN = np.dtype(
     [
         (BrdfModelParameters.ISO.value, "int16"),
         (BrdfModelParameters.VOL.value, "int16"),
         (BrdfModelParameters.GEO.value, "int16"),
     ]
+)
+DTYPE_QUALITY_COUNT = np.dtype(
+    [("Q0COUNT", "int16"), ("Q1COUNT", "int16"), ("NOTQ0Q1COUNT", "int16")]
 )
 DTYPE_SUPPORT = np.dtype([("AFX", "int16"), ("RMS", "int16")])
 DTYPE_QUALITY = np.dtype([("MASK", "int16"), ("NUM", "int16")])
@@ -125,6 +136,19 @@ def folder_doy(folder: str) -> int:
         A 'int' type: Day of the year that folder corresponds to.
     """
     return folder_datetime(folder).timetuple().tm_yday
+
+
+def filter_h5_info(files_dict: dict, doy: int) -> dict:
+    """
+    :param files_dict: 
+        A nested dict containing dates and BRDF file paths, as returned by hdf5_files()
+    :return filtered_files_dict: 
+        A filtered file dictionary containing dates and BRDF file paths for a specific day of year (doy).
+    """
+    filtered_files_dict = {
+        k: v for (k, v) in files_dict.items() if folder_doy(k) == doy
+    }
+    return filtered_files_dict
 
 
 def shape_of_window(window):
@@ -256,9 +280,25 @@ def read_brdf_dataset(ds, param, window=None):
 
 
 def get_qualityband_count_window(
-    h5_info: Dict, band_name: str, window: Iterable[Iterable[int]]
+    h5_info: Dict,
+    band_name: str,
+    window: Iterable[Iterable[int]],
+    include_quality_values: Iterable[int] = None,
+    exclude_quality_values: Iterable[int] = None,
 ):
     """returns sum of good quality data count per pixels for a window."""
+
+    error_msg = "Please provide include_quality_values OR exclude_quality_values."
+
+    # Throw error when both include_quality_values and exclude_quality_values are None
+    assert (include_quality_values is not None) or (
+        exclude_quality_values is not None
+    ), error_msg
+
+    # Throw error when both include_quality_values and exclude_quality_values are not None
+    assert (include_quality_values is None) or (
+        exclude_quality_values is None
+    ), error_msg
 
     def read_quality_data(filename: str):
         """
@@ -270,10 +310,15 @@ def get_qualityband_count_window(
         with h5py.File(filename, "r") as fid:
             # Define quality array
             qual_array = read_brdf_quality_dataset(fid[band_name], window)
-            # Where the array is 0 (good quality), map to 1.0 and 0.0 everywhere else
-            good_qual_data = (qual_array == 0).astype(float)
+
+            # Setup new array where quality values to be counted are 1.0
+            if include_quality_values is not None:
+                quality_count_array = np.isin(qual_array, include_quality_values)
+            else:
+                quality_count_array = ~np.isin(qual_array, exclude_quality_values)
+
             # Preserve nans from original array
-            return np.where(np.isnan(qual_array), np.nan, good_qual_data)
+            return np.where(np.isnan(qual_array), np.nan, quality_count_array * 1.0)
 
     first, *rest = list(h5_info)
 
@@ -287,7 +332,8 @@ def get_qualityband_count_window(
         data_sum = np.where(
             data_sum_nan & new_data_nan,
             np.nan,
-            np.where(data_sum_nan, 0.0, data_sum) + np.where(new_data_nan, 0.0, new_data),
+            np.where(data_sum_nan, 0.0, data_sum)
+            + np.where(new_data_nan, 0.0, new_data),
         )
 
     return window, data_sum
@@ -299,6 +345,8 @@ def get_qualityband_count(
     shape: Iterable[int],
     compute_chunks: Iterable[int],
     nprocs: int,
+    include_quality_values: Iterable[int] = None,
+    exclude_quality_values: Iterable[int] = None,
 ):
     """
     This function computes and returns the number of valid pixels
@@ -318,7 +366,13 @@ def get_qualityband_count(
         results = pool.starmap(
             get_qualityband_count_window,
             [
-                (h5_info, band_name, window)
+                (
+                    h5_info,
+                    band_name,
+                    window,
+                    include_quality_values,
+                    exclude_quality_values,
+                )
                 for window in generate_windows(shape, compute_chunks)
             ],
         )
@@ -354,7 +408,9 @@ def calculate_combined_mask(afx, rms):
     return rms_afx_mask
 
 
-def brdf_indices_quality_check(avg_data=None):
+def brdf_indices_quality_check(
+    quality_count_q0, quality_count_q1, quality_count_notq0q1, avg_data=None
+):
     """
     This function performs the quality check on the temporal averages data.
     The quality check is performed in following steps:
@@ -374,8 +430,9 @@ def brdf_indices_quality_check(avg_data=None):
     :return filtered_data:
          A 'dict' type data that contains the filtered data of brdf
          shape function (alpha1 and alpha2) in lognormal space. Additional
-         data, mean brdf iso parameter, shape indices (rms and afx), mask
-         and number of observations used in generating shape function are
+         data, mean brdf iso parameter, number of observations used in 
+         generating the mean brdf iso parameters, shape indices (rms and afx), 
+         mask and number of observations used in generating shape function are
          also included.
     """
     filtered_data = {}
@@ -437,6 +494,12 @@ def brdf_indices_quality_check(avg_data=None):
         temp[BrdfModelParameters.GEO.value] = np.ma.masked_array(
             alpha2 * iso_mean, mask=combined_mask
         )
+
+        # Define number of observations used for the parameter averages
+        temp["Q0COUNT"] = quality_count_q0
+        temp["Q1COUNT"] = quality_count_q1
+        temp["NOTQ0Q1COUNT"] = quality_count_notq0q1
+
         temp["AFX"] = np.ma.masked_array(afx, mask=combined_mask)
         temp["RMS"] = np.ma.masked_array(rms, mask=combined_mask)
         temp["MASK"] = np.array(combined_mask)
@@ -590,7 +653,9 @@ def generate_windows(
     :return:
         a subset window of ((y, x), (y, x))
     """
-    for x, y in generate_tiles(shape[0], shape[1], compute_chunks[0], compute_chunks[1]):
+    for x, y in generate_tiles(
+        shape[0], shape[1], compute_chunks[0], compute_chunks[1]
+    ):
         yield (slice(*y), slice(*x))
 
 
@@ -729,6 +794,23 @@ def create_brdf_datasets(
         dtype=DTYPE_QUALITY,
     )
 
+    attrs = dict(
+        description=(
+            "Number of observations used" " in generating mean BRDF parameters"
+        ),
+        **common_attrs,
+    )
+    create_dataset(
+        group,
+        "BRDF_Albedo_Quality_Count_{}".format(band_name),
+        shape,
+        attrs,
+        chunks=chunks,
+        filter_opts=filter_opts,
+        compression=compression,
+        dtype=DTYPE_QUALITY_COUNT,
+    )
+
 
 def write_chunk(data_dict, fid, band, window):
     """
@@ -760,9 +842,14 @@ def write_chunk(data_dict, fid, band, window):
     for band_name in DTYPE_QUALITY.names:
         data_quality[band_name] = data_dict[key][band_name].astype("int16")
 
+    data_count = np.ndarray(shape, dtype=DTYPE_QUALITY_COUNT)
+    for band_name in DTYPE_QUALITY_COUNT.names:
+        data_count[band_name] = data_dict[key][band_name].astype("int16")
+
     fid["BRDF_Albedo_Parameters_{}".format(band)][window] = data_main
     fid["BRDF_Albedo_Shape_Indices_{}".format(band)][window] = data_support
     fid["BRDF_Albedo_Shape_Parameters_Quality_{}".format(band)][window] = data_quality
+    fid["BRDF_Albedo_Quality_Count_{}".format(band)][window] = data_count
 
 
 def get_band_info(h5_info: Dict, band_name: str):
@@ -928,7 +1015,10 @@ def apply_convolution(filename, h5_info, window, filter_size, mask_indices):
             [data_clean[filter_size] for i in range(filter_size)]
         )
         data_clean[len(all_data_keys) + filter_size :] = np.array(
-            [data_clean[filter_size + len(all_data_keys) - 1] for i in range(filter_size)]
+            [
+                data_clean[filter_size + len(all_data_keys) - 1]
+                for i in range(filter_size)
+            ]
         )
 
         # mask where data are invalid
@@ -947,7 +1037,9 @@ def apply_convolution(filename, h5_info, window, filter_size, mask_indices):
         # perform convolution using Gaussian filter defined above
         for i in range(data_clean.shape[1]):
             for j in range(data_clean.shape[2]):
-                data_clean[:, i, j] = np.convolve(data_clean[:, i, j], filt, mode="same")
+                data_clean[:, i, j] = np.convolve(
+                    data_clean[:, i, j], filt, mode="same"
+                )
 
         for index, key in enumerate(all_data_keys):
             temp[key] = data_clean[index + filter_size]
@@ -965,6 +1057,7 @@ def _get_measurement_info() -> Dict:
         "Parameters": DTYPE_MAIN.names,
         "Shape_Indices": DTYPE_SUPPORT.names,
         "Shape_Parameters_Quality": DTYPE_QUALITY.names,
+        "Parameters_Quality": DTYPE_QUALITY_COUNT.names,
     }
 
     measurements = {}
@@ -1042,7 +1135,29 @@ def post_cleanup_process(
 
     for doy in day_numbers:
         avg_data = temporal_average(data_convolved, doy)
-        filtered_data = brdf_indices_quality_check(avg_data=avg_data)
+
+        # Filter dictionary containing h5 files to only include files with DOY of interest
+        filtered_h5_info = filter_h5_info(h5_info, doy)
+
+        band_name = quality_band_name(band)
+
+        # Calculate quality counts for window, 1st extension returns array only without window
+        quality_count_q0_window = get_qualityband_count_window(
+            filtered_h5_info, band_name, window, include_quality_values=[0]
+        )[1]
+        quality_count_q1_window = get_qualityband_count_window(
+            filtered_h5_info, band_name, window, include_quality_values=[1]
+        )[1]
+        quality_count_notq0q1_window = get_qualityband_count_window(
+            filtered_h5_info, band_name, window, exclude_quality_values=[0, 1]
+        )[1]
+
+        filtered_data = brdf_indices_quality_check(
+            quality_count_q0_window,
+            quality_count_q1_window,
+            quality_count_notq0q1_window,
+            avg_data,
+        )
 
         outfile = pjoin(outdir, BRDF_AVG_FILE_BAND_FMT.format(tile, doy, band))
         with LOCKS[outfile]:
@@ -1080,7 +1195,9 @@ def write_brdf_fallback_band(
         shape=shape,
         compute_chunks=compute_chunks,
         nprocs=nprocs,
+        include_quality_values=[0],
     )
+
     quality_count = np.ma.masked_invalid(quality_count)
 
     # get the index where band_quality number is less the minimum number of valid pixels required  # noqa: E501 # pylint: disable=line-too-long
@@ -1100,7 +1217,7 @@ def write_brdf_fallback_band(
             create_dataset(
                 clean_data,
                 key,
-                (3, shape[0], shape[1]),
+                (4, shape[0], shape[1]),
                 {},
                 chunks=(1,) + data_chunks,
                 compression=H5CompressionFilter.LZF,

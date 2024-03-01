@@ -5,7 +5,7 @@
 
 - Create timeseries averages for the NOAA water vapour data.
 """
-
+import enum
 import sys
 import json
 from pathlib import Path
@@ -16,11 +16,11 @@ import h5py
 
 import dateutil.parser
 
-from eodatasets.prepare import (
+from eodatasets3.prepare import (
     noaa_c_c_prwtreatm_1_prepare as water_vapour,
     nasa_c_m_mcd43a1_6_prepare as modis_brdf,
 )
-from eodatasets.prepare.utils import ItemProvider
+from eodatasets3.utils import ItemProvider
 
 from wagl.hdf5.compression import H5CompressionFilter
 

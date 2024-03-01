@@ -7,13 +7,14 @@ setup(
     name="swfo",
     use_scm_version=True,
     url="https://github.com/OpenDataCubePipelines/swfo",
-    description=("A collection of data transformation scripts"),
+    description="A collection of data transformation scripts",
     packages=find_packages(exclude=("tests",)),
     setup_requires=["setuptools_scm"],
     install_requires=[
+        'ard-pipeline',
         "affine",
         "click",
-        "eodatasets",
+        "eodatasets3",
         "GDAL",
         "netCDF4",
         "h5py",
@@ -24,12 +25,10 @@ setup(
         "ruamel.yaml",
         "scipy",
         "shapely",
-        "wagl",
         "importlib-metadata;python_version<'3.8'",
     ],
     dependency_links=[
-        "git+https://github.com/GeoscienceAustralia/wagl@develop#egg=wagl",
-        "git+https://github.com/GeoscienceAustralia/eo-datasets@eodatasets-0.12#egg=eodatasets-0.12",  # noqa: E501
+        "git+https://github.com/OpenDataCubePipelines/ard-pipeline.git@main#egg=ard-pipeline",
     ],
     extras_require=dict(
         test=["pytest", "pytest-flake8", "deepdiff", "flake8", "pep8-naming"]

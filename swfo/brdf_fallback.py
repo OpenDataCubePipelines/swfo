@@ -28,7 +28,6 @@ import shapely.ops
 from scipy import ndimage
 import rasterio.features
 
-from eodatasets.metadata.valid_region import _to_lists
 from wagl.hdf5.compression import H5CompressionFilter
 from wagl.hdf5 import attach_image_attributes
 from wagl.tiling import generate_tiles
@@ -531,6 +530,16 @@ def get_std_block(h5_info, band_name, param, window):
         data[item][idx] = run_median[idx]
 
     return np.nanstd(data, axis=0, ddof=1, keepdims=False)
+
+
+def _to_lists(x):
+    """
+    Returns lists of lists when given tuples of tuples
+    """
+    if isinstance(x, tuple):
+        return [_to_lists(el) for el in x]
+
+    return x
 
 
 def _calculate_valid_bounds(mask: np.ndarray, transform: Affine) -> Dict:

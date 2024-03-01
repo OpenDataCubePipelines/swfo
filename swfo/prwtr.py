@@ -3,7 +3,7 @@
 """
 Convert PR_WTR NetCDF files to HDF5.
 """
-
+import enum
 from datetime import datetime, timezone
 from pathlib import Path
 import json
@@ -16,14 +16,15 @@ import osr
 import rasterio
 import pandas
 import h5py
+from eodatasets3.utils import ItemProvider
 
-from eodatasets.prepare.utils import ItemProvider
 from wagl.geobox import GriddedGeoBox
 from wagl.hdf5.compression import H5CompressionFilter
 from wagl.hdf5 import read_h5_table, write_h5_image, write_dataframe
 from wagl.hdf5 import attach_attributes
 
 from . import h5utils
+
 
 
 CRS = osr.SpatialReference()

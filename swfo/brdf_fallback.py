@@ -57,10 +57,10 @@ SCALE_FACTOR_2 = 0.001
 INV_SCALE_FACTOR_2 = 1000
 
 """
-Below we define the dtypes of 'structured' numpy arrays that store the following respectively: 
-'MAIN' - The temporal average of the BRDF parameters. 
+Below we define the dtypes of 'structured' numpy arrays that store the following respectively:
+'MAIN' - The temporal average of the BRDF parameters.
 'QUALITY_COUNT' - The number of days included in the temporal average with some quality flag(s).
-'SUPPORT' - The BRDF 'shape' parameters, which are used to filter out values outside a valid range. 
+'SUPPORT' - The BRDF 'shape' parameters, which are used to filter out values outside a valid range.
 'QUALITY' - Indicates whether a pixel has been masked (due to unfeasible BRDF shape parameters and other filters).
 """
 
@@ -139,9 +139,9 @@ def folder_doy(folder: str) -> int:
 
 def filter_h5_info(files_dict: dict, doy: int) -> dict:
     """
-    :param files_dict: 
+    :param files_dict:
         A nested dict containing dates and BRDF file paths, as returned by hdf5_files()
-    :return filtered_files_dict: 
+    :return filtered_files_dict:
         A filtered file dictionary containing dates and BRDF file paths for a specific day of year (doy).
     """
     filtered_files_dict = {
@@ -429,8 +429,8 @@ def brdf_indices_quality_check(
     :return filtered_data:
          A 'dict' type data that contains the filtered data of brdf
          shape function (alpha1 and alpha2) in lognormal space. Additional
-         data, mean brdf iso parameter, number of observations used in 
-         generating the mean brdf iso parameters, shape indices (rms and afx), 
+         data, mean brdf iso parameter, number of observations used in
+         generating the mean brdf iso parameters, shape indices (rms and afx),
          mask and number of observations used in generating shape function are
          also included.
     """
@@ -952,7 +952,6 @@ def apply_threshold(
         )
 
         for param_index, param in enumerate(BrdfModelParameters):
-
             # get the data iso, vol or geo from data which is a dict for all the keys and convert to numpy array  # noqa: E501 # pylint: disable=line-too-long
             data_param = data_all_params[:, param_index, :, :]
 

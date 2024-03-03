@@ -147,14 +147,12 @@ def buildvrt(indir, outdir):
         # mosaic each MODIS tile for the current day directory
         for h4_fname in day.rglob("*.hdf"):
             with rasterio.open(str(h4_fname.absolute())) as h4_ds:
-
                 # each subdataset will form a separate mosaic
                 for i, sds_name in enumerate(h4_ds.subdatasets):
                     subdataset_fnames[i].append(sds_name)
 
         # loop over each subdataset and mosaic from all supporting MODIS tiles
         for _, file_list in subdataset_fnames.items():
-
             # temp file for the input file list
             with tempfile.NamedTemporaryFile("w") as tmpf:
                 tmpf.writelines("\n".join(file_list))

@@ -70,7 +70,6 @@ def convert_file(
         None. Content is written directly to disk.
     """
     with rasterio.open(str(fname), "r") as ds:
-
         # create empty or copy the user supplied filter options
         if not filter_opts:
             filter_opts = dict()
@@ -160,7 +159,9 @@ def jaxa_buildvrt(indir, outdir):
                     name = Path(member.name).name
                     key = case[name[name.find("_") + 1 : name.find(".")]]
 
-                    pathname = GDAL_PREFIX.format(fname.absolute().joinpath(member.name))
+                    pathname = GDAL_PREFIX.format(
+                        fname.absolute().joinpath(member.name)
+                    )
                     fnames[key].append(pathname)
 
     for key, value in case.items():

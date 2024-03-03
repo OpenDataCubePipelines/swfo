@@ -51,7 +51,10 @@ def _get_next_md_id(h5_group: h5py.Group, group_prefix: str) -> int:
 
 
 def _write_dataset(
-    h5_group: h5py.Group, dataset: Dict, dataset_path: str = "", track_order: bool = True
+    h5_group: h5py.Group,
+    dataset: Dict,
+    dataset_path: str = "",
+    track_order: bool = True,
 ) -> h5py.Dataset:
     """
     Internal function for writing dataset metadata to a H5file
@@ -72,7 +75,9 @@ def _write_dataset(
 
     doc_id = str(_get_next_md_id(h5_group, doc_group))
     ds = h5_group.create_dataset(
-        "/".join((PRIVATE_NAMESPACE, dataset_path, doc_id)), dtype=VLEN_STRING, shape=(1,)
+        "/".join((PRIVATE_NAMESPACE, dataset_path, doc_id)),
+        dtype=VLEN_STRING,
+        shape=(1,),
     )
 
     with StringIO() as stream:
@@ -205,12 +210,8 @@ def write_h5_md(
     if h5_group.get(collection_path):
         # Collate known metadata references; requires access the h5py internal methods
         existing_refs = h5_group[collection_path]
-        for i in range(
-            existing_refs._dcpl.get_virtual_count()
-        ):  # pylint: disable=protected-access
-            known_metadata_refs.append(
-                existing_refs._dcpl.get_virtual_dsetname(i)
-            )  # pylint: disable=protected-access
+        for i in range(existing_refs._dcpl.get_virtual_count()):  # pylint: disable=protected-access
+            known_metadata_refs.append(existing_refs._dcpl.get_virtual_dsetname(i))  # pylint: disable=protected-access
         existing_refs = None
 
     # Create metadata and collate new references
@@ -224,7 +225,8 @@ def write_h5_md(
     if new_metadata_refs:
         # Extend the virtual layout for new datasets
         virtual_collection = h5py.VirtualLayout(
-            shape=(len(known_metadata_refs) + len(new_metadata_refs),), dtype=VLEN_STRING
+            shape=(len(known_metadata_refs) + len(new_metadata_refs),),
+            dtype=VLEN_STRING,
         )
 
         ds_cntr = 0

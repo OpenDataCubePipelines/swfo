@@ -5,7 +5,7 @@
 
 - Create timeseries averages for the NOAA water vapour data.
 """
-import enum
+
 import sys
 import json
 from pathlib import Path
@@ -256,7 +256,6 @@ def mcd43a1_h5(indir, outdir, compression, filter_opts):
 
     # find vrt files
     for day in indir.iterdir():
-
         out_fname = outdir.joinpath("MCD43A1_{}_.h5".format(day.name))
         out_fname.parent.mkdir(parents=True, exist_ok=True)
 
@@ -264,7 +263,6 @@ def mcd43a1_h5(indir, outdir, compression, filter_opts):
 
         with atomic_h5_write(out_fname, "a") as out_h5:
             for vrt_fname in day.rglob("*.vrt"):
-
                 # attributes for h5 (scale and offset has been hardcoded to the values
                 # for MCD43A1 from (https://lpdaac.usgs.gov/dataset_discovery/modis/modis_products_table/mcd43a1_v006)  # noqa: E501 # pylint: disable=line-too-long
 
@@ -349,7 +347,9 @@ def pr_wtr_md_cmd(fname, outdir, compression, filter_opts):
         _md["properties"]["odc:file_format"] = "HDF5"
         for measurement in _md["measurements"]:
             layer_name = (
-                dateutil.parser.parse(_md["datetime"]).strftime("/%Y/%B-%d/%H%M").upper()
+                dateutil.parser.parse(_md["datetime"])
+                .strftime("/%Y/%B-%d/%H%M")
+                .upper()
             )
             _md["measurements"][measurement]["layer"] = layer_name
             _md["measurements"][measurement]["path"] = ""
@@ -365,7 +365,9 @@ def pr_wtr_md_cmd(fname, outdir, compression, filter_opts):
         write_h5_md(out_h5, md, dataset_names)
 
 
-@prwtr_cli.command("fallback", help="Create a PR_WTR fallback dataset based on averages.")
+@prwtr_cli.command(
+    "fallback", help="Create a PR_WTR fallback dataset based on averages."
+)
 @_io_dir_options
 @_compression_options
 def pr_wtr_fallback(indir, outdir, compression, filter_opts):
@@ -407,7 +409,9 @@ def ga_dsm(fname, out_fname, out_dataset_path, compression, filter_opts):
         )
     }
     with atomic_h5_write(out_fname, "w") as out_h5:
-        dsm.convert_file(fname, out_h5, out_dataset_path, compression, filter_opts, attrs)
+        dsm.convert_file(
+            fname, out_h5, out_dataset_path, compression, filter_opts, attrs
+        )
 
 
 @srtm_dsm_cli.command("h5-md", help="Convert GA's SRTM ENVI file into HDF5 with md.")
@@ -560,7 +564,9 @@ def atsr2_files(indir, out_fname, compression, filter_opts):
         atsr2_aot.convert(indir, out_h5, compression, filter_opts)
 
 
-@aot_cli.command("h5-md", help="Converts .pix & .cmp files to a HDF5 file with metadata.")
+@aot_cli.command(
+    "h5-md", help="Converts .pix & .cmp files to a HDF5 file with metadata."
+)
 @click.option(
     "--indir",
     type=click.Path(dir_okay=True, file_okay=False),

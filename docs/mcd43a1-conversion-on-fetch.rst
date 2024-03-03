@@ -17,7 +17,7 @@ For the Australian continental region the following name_pattern was used to det
 
     MCD43A1\.A[0-9]{7}\.h(2[7-9]|3[0-2])v(09|1[0-3])\.006\.[0-9]{13}\.hdf
 
-Limitation: 
+Limitation:
 
 * expect_file checks existance of the hdf file; not the h5 file due to requiring both the dataset and associated metadata document prior to conversion.
 

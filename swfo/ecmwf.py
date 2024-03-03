@@ -109,7 +109,11 @@ def _convert_3d(rds, fid, dataset_name, compression, filter_opts):
 
     # process by tile
     for tile in generate_tiles(rds.width, rds.height, rds.width, ytile):
-        idx = (slice(None), slice(tile[0][0], tile[0][1]), slice(tile[1][0], tile[1][1]))
+        idx = (
+            slice(None),
+            slice(tile[0][0], tile[0][1]),
+            slice(tile[1][0], tile[1][1]),
+        )
         dataset[idx] = rds.read(bands, window=tile)
 
     # metadata

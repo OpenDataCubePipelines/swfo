@@ -3,6 +3,7 @@
 """
 BRDF shape parameters and indices computation functions
 """
+
 import numpy as np
 
 # these constants required for computation BRDF shape function and Indices

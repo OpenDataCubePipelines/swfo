@@ -85,7 +85,6 @@ def prwtr_average(indir, outdir, compression=H5CompressionFilter.LZF, filter_opt
 
     # create output file
     with h5py.File(str(out_fname), "w") as fid:
-
         # the data is ordered so we can safely use BAND-1 = Jan-1
         for band_index, item in enumerate(groups):
             grp_name, grp_df = item
@@ -135,5 +134,10 @@ def prwtr_average(indir, outdir, compression=H5CompressionFilter.LZF, filter_opt
 
             # write
             write_h5_image(
-                mean, dname, fid, attrs=attrs, compression=compression, filter_opts=f_opts
+                mean,
+                dname,
+                fid,
+                attrs=attrs,
+                compression=compression,
+                filter_opts=f_opts,
             )

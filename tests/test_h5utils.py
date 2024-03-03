@@ -25,7 +25,6 @@ def _in_memory_h5(tmp_path):
     with h5py.File(
         name=tmp_path / "test_file.h5", driver="core", backing_store=False
     ) as test_file:
-
         yield test_file
 
 
@@ -34,7 +33,6 @@ def test_get_next_id(tmp_path):
     * Tests next id resolution for the hdf5 archives
     """
     with _in_memory_h5(tmp_path) as h5file:
-
         # Test first id of empty group
         first_id = _get_next_md_id(h5file, "/")
         assert first_id == 1

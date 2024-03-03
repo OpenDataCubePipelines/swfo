@@ -3,7 +3,7 @@
 """
 Convert PR_WTR NetCDF files to HDF5.
 """
-import enum
+
 from datetime import datetime, timezone
 from pathlib import Path
 import json
@@ -24,7 +24,6 @@ from wagl.hdf5 import read_h5_table, write_h5_image, write_dataframe
 from wagl.hdf5 import attach_attributes
 
 from . import h5utils
-
 
 
 CRS = osr.SpatialReference()
@@ -103,7 +102,9 @@ def convert_file(
             # TODO remove NETCDF tags
             # TODO add fillvalue attr
             attrs = ds.tags(i)
-            attrs["timestamp"] = df.iloc[i - 1]["timestamp"].replace(tzinfo=timezone.utc)
+            attrs["timestamp"] = df.iloc[i - 1]["timestamp"].replace(
+                tzinfo=timezone.utc
+            )
             attrs["band_name"] = df.iloc[i - 1]["band_name"]
             attrs["geotransform"] = ds.transform.to_gdal()
             attrs["crs_wkt"] = CRS.ExportToWkt()
@@ -275,7 +276,10 @@ def _get_lineage_md(group_df) -> Tuple[List[str], Dict]:
 
 
 def fallback(
-    indir, outdir, compression=H5CompressionFilter.LZF, filter_opts: Optional[Dict] = None
+    indir,
+    outdir,
+    compression=H5CompressionFilter.LZF,
+    filter_opts: Optional[Dict] = None,
 ):
     """
     Take the 4 hourly daily average from all files.
@@ -294,7 +298,6 @@ def fallback(
 
     # create output file
     with h5utils.atomic_h5_write(out_fname, "w", track_order=True) as fid:
-
         # the data is ordered so we can safely use BAND-1 = Jan-1
         for band_index, item in enumerate(groups):
             grp_name, grp_df = item
@@ -344,7 +347,12 @@ def fallback(
             # write
             h5utils.create_groups(fid, dname.rsplit("/", 1)[0], track_order=True)
             write_h5_image(
-                mean, dname, fid, attrs=attrs, compression=compression, filter_opts=f_opts
+                mean,
+                dname,
+                fid,
+                attrs=attrs,
+                compression=compression,
+                filter_opts=f_opts,
             )
             # Generate metadata
             lineage_ids, src_md = _get_lineage_md(grp_df)

@@ -12,11 +12,11 @@ from typing import Dict, List, Tuple, Optional
 import urllib.parse
 
 import numpy
-import osr
 import rasterio
 import pandas
 import h5py
 from eodatasets3.utils import ItemProvider
+from osgeo import osr
 
 from wagl.geobox import GriddedGeoBox
 from wagl.hdf5.compression import H5CompressionFilter
